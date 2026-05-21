@@ -89,6 +89,7 @@ _TS_MODELS = {
     },
     "inception-time": {
         "display_name": "InceptionTime",
+        "architecture": "Inception",
         "description": "InceptionTime: deep learning classifier for time-series (Fawaz et al., 2020).",
         "loader": InceptionTimeModel,
     },
@@ -101,7 +102,7 @@ class TimeSeriesTaskHandler(TaskHandler):
     def get_models(self) -> list[dict]:
         return [
             {"name": name, "display_name": info["display_name"],
-             "architecture": info.get("architecture", ""), "description": info["description"],
+             "architecture": info["architecture"], "description": info["description"],
              "task": "timeseries"}
             for name, info in _TS_MODELS.items()
         ]
