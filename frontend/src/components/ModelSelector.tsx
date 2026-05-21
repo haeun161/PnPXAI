@@ -39,7 +39,7 @@ export default function ModelSelector({ task, selected, onSelect, disabled }: Pr
         <option value="">Choose a model...</option>
         {models.map((m) => (
           <option key={m.name} value={m.name}>
-            {m.display_name} ({m.architecture})
+            {m.architecture ? `${m.display_name} (${m.architecture})` : m.display_name}
           </option>
         ))}
       </select>
