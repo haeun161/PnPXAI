@@ -24,6 +24,11 @@ class ExplainerInfo(BaseModel):
     incompatibility_reason: Optional[str] = None
 
 
+class TokenAttribution(BaseModel):
+    token: str
+    score: float
+
+
 class ExplainerResult(BaseModel):
     explainer_name: str
     display_name: str
@@ -36,6 +41,7 @@ class ExplainerResult(BaseModel):
     complexity: Optional[float] = None
     not_supported_reason: Optional[str] = None
     error_message: Optional[str] = None
+    token_attributions: Optional[list[TokenAttribution]] = None
 
 
 class PredictionItem(BaseModel):

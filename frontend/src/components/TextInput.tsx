@@ -35,7 +35,7 @@ export default function TextInput({ onTextReady, disabled }: Props) {
       <textarea
         value={text}
         onChange={(e) => handleTextChange(e.target.value)}
-        placeholder="Type or paste text here..."
+        placeholder="e.g. This movie was absolutely wonderful and I loved every moment of it!"
         disabled={disabled}
         className="w-full h-32 rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
       />

@@ -40,6 +40,26 @@ export default function ResultCard({ result, task, rankingMetric }: Props) {
         {isCompleted && result.visualization_url && (
           <img src={result.visualization_url} alt={result.display_name} className="w-full h-full object-contain" />
         )}
+        {/* Token highlighting for text tasks */}
+        {isCompleted && task === "text" && result.token_attributions && (
+          <div className="absolute bottom-0 left-0 right-0 bg-white/90 p-2 max-h-[50%] overflow-y-auto">
+            <div className="flex flex-wrap gap-0.5">
+              {result.token_attributions.map((ta, i) => (
+                <span
+                  key={i}
+                  className="px-0.5 py-px rounded text-[10px]"
+                  style={{
+                    backgroundColor: `rgba(239, 68, 68, ${Math.min(ta.score, 1) * 0.7})`,
+                    color: ta.score > 0.5 ? "white" : "inherit",
+                  }}
+                  title={`${ta.token}: ${ta.score.toFixed(3)}`}
+                >
+                  {ta.token}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         {isNotSupported && (
           <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 p-4">
             <svg className="w-8 h-8 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">

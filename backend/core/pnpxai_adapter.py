@@ -17,9 +17,13 @@ def normalize_attribution(attribution) -> np.ndarray:
     while attr_np.ndim > 2 and attr_np.shape[0] == 1:
         attr_np = attr_np.squeeze(0)
 
-    # For image: aggregate channels (C, H, W) -> (H, W)
+    # Aggregate to 1D or 2D depending on shape
     if attr_np.ndim == 3:
+        # Image (C, H, W) -> (H, W): mean over channels
         attr_np = np.mean(np.abs(attr_np), axis=0)
+    elif attr_np.ndim == 2:
+        # Text (seq_len, hidden_dim) -> (seq_len,): mean over hidden dim
+        attr_np = np.mean(np.abs(attr_np), axis=-1)
     elif attr_np.ndim == 1:
         attr_np = np.abs(attr_np)
     else:

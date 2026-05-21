@@ -22,6 +22,11 @@ export interface ExplainerInfo {
   incompatibility_reason: string | null;
 }
 
+export interface TokenAttribution {
+  token: string;
+  score: number;
+}
+
 export interface ExplainerResult {
   explainer_name: string;
   display_name: string;
@@ -34,6 +39,7 @@ export interface ExplainerResult {
   complexity: number | null;
   not_supported_reason: string | null;
   error_message: string | null;
+  token_attributions: TokenAttribution[] | null;
 }
 
 export interface PredictionItem {
