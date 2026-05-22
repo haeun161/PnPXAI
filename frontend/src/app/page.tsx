@@ -63,8 +63,8 @@ export default function Home() {
           {/* Left Panel */}
           <div className="w-80 flex-shrink-0 space-y-4">
             <TaskSelector selected={task} onSelect={handleTaskChange} disabled={loading} />
-            <DataInput task={task} onDataReady={(data) => setInputData(data)} disabled={loading} />
             <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); setExplainers([]); }} disabled={loading} />
+            <DataInput task={task} onDataReady={(data) => setInputData(data)} disabled={loading} />
             <ExplainerSelector task={task} model={model} selected={explainers} onSelect={setExplainers} disabled={loading} />
             <RankingMetricSelector selected={rankingMetric} onSelect={setRankingMetric} task={task} disabled={loading} />
 
