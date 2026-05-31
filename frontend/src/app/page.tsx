@@ -5,6 +5,7 @@ import TaskSelector from "@/components/TaskSelector";
 import DataInput from "@/components/DataInput";
 import ModelSelector from "@/components/ModelSelector";
 import ExplainerSelector from "@/components/ExplainerSelector";
+import RankingMetricSelector from "@/components/RankingMetricSelector";
 import PredictionInfo from "@/components/PredictionInfo";
 import ResultsPanel from "@/components/ResultsPanel";
 import ProgressIndicator from "@/components/ProgressIndicator";
