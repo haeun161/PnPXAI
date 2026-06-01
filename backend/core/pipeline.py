@@ -178,9 +178,24 @@ def run_explanation_pipeline(
             # Time-series returns {"tensor": ..., "col_names": ...}
             if isinstance(input_data, dict) and "tensor" in input_data:
                 input_tensor = input_data["tensor"]
-                num_channels = input_tensor.shape[1]
-                # Reload model with correct num_input_channels
-                model = handler.load_model(model_name, num_input_channels=num_channels)
+                data_channels = input_tensor.shape[1]
+
+                # Check model-data channel compatibility
+                from backend.tasks.timeseries import _TS_MODELS
+                model_info = _TS_MODELS.get(model_name, {})
+                model_default_ch = model_info.get("default_channels")
+
+                if model_default_ch is not None and model_default_ch != data_channels:
+                    update_job_status(
+                        job_id, "failed",
+                        f"Channel mismatch: model '{model_name}' expects {model_default_ch}-channel input, "
+                        f"but data has {data_channels} channel(s). "
+                        f"Please use a {'multi-variate' if data_channels > 1 else 'single-variate'} model, "
+                        f"or upload {'multi-variate' if model_default_ch > 1 else 'single-variate'} data."
+                    )
+                    return
+
+                model = handler.load_model(model_name, num_input_channels=data_channels)
                 explainer_model = model
             else:
                 input_tensor = input_data if isinstance(input_data, torch.Tensor) else None
