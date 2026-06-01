@@ -42,6 +42,7 @@ class ExplainerResult(BaseModel):
     not_supported_reason: Optional[str] = None
     error_message: Optional[str] = None
     token_attributions: Optional[list[TokenAttribution]] = None
+    current_step: Optional[str] = None
 
 
 class PredictionItem(BaseModel):

@@ -21,7 +21,7 @@ export default function ProgressIndicator({ job, loading }: Props) {
         <span className="text-blue-700 font-medium">
           {job?.status === "completed" ? "Analysis Complete" : "Analyzing..."}
         </span>
-        <span className="text-blue-500">{done}/{total} explainers</span>
+        <span className="text-blue-500">{Math.round(pct)}%</span>
       </div>
       <div className="h-2 rounded-full bg-blue-100 overflow-hidden">
         <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${pct}%` }} />

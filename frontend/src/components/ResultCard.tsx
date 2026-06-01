@@ -5,16 +5,13 @@ interface Props {
   result: ExplainerResult;
   task: TaskType;
   activeMetrics: string[];
+  modelName?: string;
+  dataUrl?: string | null;
 }
 
-const METRIC_LABELS: Record<string, string> = {
-  mu_fidelity: "Accuracy (Fidelity)",
-  abpc: "Accuracy (AbPC)",
-  sensitivity: "Sensitivity",
-  complexity: "Complexity",
-};
+const BAR_HEIGHTS = [45, 85, 35, 100, 60, 75, 40, 90, 55, 70];
 
-export default function ResultCard({ result, task, activeMetrics }: Props) {
+export default function ResultCard({ result, task, activeMetrics, modelName, dataUrl }: Props) {
   const isCompleted = result.status === "completed";
   const isNotSupported = result.status === "not_supported";
   const isFailed = result.status === "failed";
@@ -30,18 +27,15 @@ export default function ResultCard({ result, task, activeMetrics }: Props) {
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-      {/* Visualization */}
       <div className="relative bg-gray-50 aspect-square">
         {result.rank != null && (
           <div className="absolute top-2 left-2 z-10 w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shadow">
             #{result.rank}
           </div>
         )}
-
         {isCompleted && result.visualization_url && (
           <img src={result.visualization_url} alt={result.display_name} className="w-full h-full object-contain" />
         )}
-        {/* Token highlighting for text tasks */}
         {isCompleted && task === "text" && result.token_attributions && (
           <div className="absolute bottom-0 left-0 right-0 bg-white/90 p-2 max-h-[50%] overflow-y-auto">
             <div className="flex flex-wrap gap-0.5">
@@ -81,16 +75,64 @@ export default function ResultCard({ result, task, activeMetrics }: Props) {
           </div>
         )}
         {isRunning && (
-          <div className="w-full h-full flex flex-col items-center justify-center">
-            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs text-gray-400 mt-2">Computing...</span>
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-gradient-to-b from-gray-50 to-blue-50">
+            {/* Triple concentric spinning rings */}
+            <div className="relative w-16 h-16 flex items-center justify-center">
+              <div
+                className="absolute inset-0 rounded-full border-2 border-transparent border-t-blue-200 border-r-blue-200 animate-spin"
+                style={{ animationDuration: "3s" }}
+              />
+              <div
+                className="absolute inset-[5px] rounded-full border-2 border-transparent border-t-blue-400 border-l-blue-400 animate-spin"
+                style={{ animationDuration: "1.5s", animationDirection: "reverse" }}
+              />
+              <div
+                className="absolute inset-[10px] rounded-full border-2 border-transparent border-t-blue-600 animate-spin"
+                style={{ animationDuration: "0.75s" }}
+              />
+              <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            </div>
+
+            {/* Equalizer bars */}
+            <div className="flex items-end gap-px" style={{ height: "22px" }}>
+              {BAR_HEIGHTS.map((h, i) => (
+                <div
+                  key={i}
+                  className="w-1.5 rounded-t-sm animate-bounce"
+                  style={{
+                    height: `${h}%`,
+                    backgroundColor: `rgba(59, 130, 246, ${0.2 + i * 0.08})`,
+                    animationDelay: `${i * 65}ms`,
+                    animationDuration: `${520 + (i % 4) * 130}ms`,
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* Real step from backend */}
+            <span className="text-[10px] font-mono text-blue-400 tracking-wide w-full text-center px-2">
+              {result.current_step ?? "Initializing..."}
+            </span>
           </div>
         )}
       </div>
 
-      {/* Info */}
       <div className="p-3">
-        <h4 className="text-sm font-semibold text-gray-800">{result.display_name}</h4>
+        <div className="flex items-center justify-between gap-1">
+          <h4 className="text-sm font-semibold text-gray-800 truncate">{result.display_name}</h4>
+          {isCompleted && modelName && dataUrl && (
+            <a
+              href={`/optimizer?task=${task}&model=${encodeURIComponent(modelName)}&explainer=${encodeURIComponent(result.explainer_name)}&data_url=${encodeURIComponent(dataUrl)}`}
+              title="Open in Optimizer"
+              className="flex-shrink-0 flex items-center gap-0.5 text-[10px] text-green-600 hover:text-green-700 border border-green-200 hover:border-green-300 rounded px-1.5 py-0.5 transition-colors"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Optimize
+            </a>
+          )}
+        </div>
         {isCompleted && (
           <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-center">
             {metrics.map((m) => {

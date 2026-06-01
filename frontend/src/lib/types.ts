@@ -40,6 +40,7 @@ export interface ExplainerResult {
   not_supported_reason: string | null;
   error_message: string | null;
   token_attributions: TokenAttribution[] | null;
+  current_step: string | null;
 }
 
 export interface PredictionItem {

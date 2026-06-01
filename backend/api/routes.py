@@ -18,6 +18,9 @@ from backend.optimizer.optimizer_service import (
 
 router = APIRouter(prefix="/api")
 
+# In-memory store for detect-rank jobs
+_detect_rank_jobs: dict[str, dict] = {}
+
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 
@@ -105,9 +108,10 @@ async def recommend_explainers(task: str = Query(...), model: str = Query(...)):
     from pnpxai.core.recommender.recommender import XaiRecommender, CAM_BASED_EXPLAINERS
     try:
         handler = get_task_handler(task)
-        model_obj = handler.load_model(model)
+        loop = asyncio.get_running_loop()
+        model_obj = await loop.run_in_executor(None, handler.load_model, model)
         modality = handler.get_modality()
-        output = XaiRecommender().recommend(modality, model_obj)
+        output = await loop.run_in_executor(None, XaiRecommender().recommend, modality, model_obj)
         explainers = output.explainers
 
         # pnpxai's detector only knows nn.MultiheadAttention and a few HF types.
@@ -118,9 +122,186 @@ async def recommend_explainers(task: str = Query(...), model: str = Query(...)):
 
         recommended_names = [e.__name__ for e in explainers]
         available_names = {e["name"] for e in handler.get_explainers(model) if e.get("compatible", True)}
-        return {"recommended": [n for n in recommended_names if n in available_names]}
+        detected_arch_names = sorted([a.__name__ for a in output.detected_architectures])
+        return {
+            "recommended": [n for n in recommended_names if n in available_names],
+            "detected_architectures": detected_arch_names,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
+    """Background: run all compatible explainers, evaluate 4 metrics, rank top 5."""
+    import copy
+    import torch
+    from pnpxai.core.recommender.recommender import XaiRecommender, CAM_BASED_EXPLAINERS
+    from backend.core.pipeline import (
+        _get_pnpxai_explainer, _get_pnpxai_metric,
+        _run_image_inference, _run_text_inference,
+        _TextInputIdsWrapper, _GRADIENT_FREE_TEXT_EXPLAINERS,
+        _find_cam_target_layer,
+    )
+    from backend.core.pnpxai_adapter import normalize_attribution, extract_metric_value
+
+    job = _detect_rank_jobs[job_id]
+    try:
+        handler = get_task_handler(task)
+        model = handler.load_model(model_name)
+        modality = handler.get_modality()
+
+        # Architecture detection + compatible explainers
+        output = XaiRecommender().recommend(modality, model)
+        explainers = output.explainers
+        if _has_unregistered_attention(model):
+            explainers = [e for e in explainers if e not in CAM_BASED_EXPLAINERS]
+
+        all_names = [e.__name__ for e in explainers]
+        available = {e["name"] for e in handler.get_explainers(model_name) if e.get("compatible", True)}
+        explainer_names = [n for n in all_names if n in available]
+        explainer_info_map = {e["name"]: e for e in handler.get_explainers(model_name)}
+
+        job["total"] = len(explainer_names)
+        job["detected_architectures"] = sorted([a.__name__ for a in output.detected_architectures])
+
+        # Task-specific inference (done once)
+        target_tensor = None
+        input_tensor = None
+        explainer_model = model
+        text_input_ids = None
+        wrapper_model = None
+
+        if task == "image":
+            proc = handler.preprocess_input(input_data, model_name)
+            hf_label_map = getattr(handler, "get_hf_label_map", lambda m: {})(model_name)
+            target_class, _, _ = _run_image_inference(model, proc, hf_label_map)
+            input_tensor = proc
+            target_tensor = torch.tensor([target_class], dtype=torch.long)
+            explainer_model = model
+        elif task == "text":
+            text = input_data if isinstance(input_data, str) else str(input_data)
+            target_class, _, emb, ids, _, wrap = _run_text_inference(handler, model, text, model_name)
+            input_tensor = emb
+            text_input_ids = ids
+            target_tensor = torch.tensor([target_class], dtype=torch.long)
+            explainer_model = wrap
+            wrapper_model = wrap
+
+        _STATE_MUTATING = {"LRPUniformEpsilon", "LRPEpsilonPlus", "LRPEpsilonGammaBox", "LRPEpsilonAlpha2Beta1", "RAP"}
+        METRIC_KEYS = [("mu_fidelity", "MuFidelity"), ("abpc", "AbPC"),
+                       ("sensitivity", "Sensitivity"), ("complexity", "Complexity")]
+
+        results = []
+        for i, exp_name in enumerate(explainer_names):
+            job["current"] = i + 1
+            job["current_explainer"] = exp_name
+
+            try:
+                ExplainerClass = _get_pnpxai_explainer(exp_name)
+
+                if task == "text" and exp_name in _GRADIENT_FREE_TEXT_EXPLAINERS:
+                    from pnpxai.explainers.utils.feature_masks import NoMask1d
+                    active_model = _TextInputIdsWrapper(model)
+                    active_inp = text_input_ids.clone()
+                    exp_inst = ExplainerClass(active_model, feature_mask_fn=NoMask1d())
+                elif exp_name in _STATE_MUTATING:
+                    active_model = copy.deepcopy(explainer_model)
+                    active_inp = input_tensor.clone()
+                    if active_inp.is_floating_point():
+                        active_inp = active_inp.requires_grad_(True)
+                    exp_inst = ExplainerClass(active_model)
+                else:
+                    active_model = explainer_model
+                    active_inp = input_tensor.clone()
+                    if active_inp.is_floating_point():
+                        active_inp = active_inp.requires_grad_(True)
+                    exp_inst = ExplainerClass(active_model)
+
+                if task == "image" and exp_name in {"GradCam", "GuidedGradCam"}:
+                    if hasattr(exp_inst, "set_target_layer"):
+                        cam_layer = _find_cam_target_layer(active_model)
+                        if cam_layer:
+                            exp_inst = exp_inst.set_target_layer(cam_layer)
+
+                attr_raw = exp_inst.attribute(active_inp, target_tensor)
+
+                metrics = {}
+                for key, cls_name in METRIC_KEYS:
+                    if task == "text" and cls_name == "MuFidelity":
+                        metrics[key] = None
+                        continue
+                    try:
+                        m = _get_pnpxai_metric(cls_name, active_model, exp_inst)
+                        val = extract_metric_value(m.evaluate(active_inp, target_tensor, attr_raw))
+                        metrics[key] = val
+                    except Exception:
+                        metrics[key] = None
+
+                valid = [v for v in metrics.values() if v is not None]
+                avg = sum(valid) / len(valid) if valid else 0.0
+
+                info = explainer_info_map.get(exp_name, {})
+                results.append({
+                    "name": exp_name,
+                    "display_name": info.get("display_name", exp_name),
+                    "estimated_compute_time_seconds": info.get("estimated_compute_time_seconds", 0),
+                    "metrics": metrics,
+                    "avg_score": avg,
+                })
+            except Exception as e:
+                print(f"[detect-rank] {exp_name} failed: {e}")
+
+        results.sort(key=lambda x: x["avg_score"], reverse=True)
+        job["results"] = results
+        job["status"] = "completed"
+
+    except Exception as e:
+        job["status"] = "error"
+        job["error"] = str(e)
+
+
+@router.post("/detect-rank")
+async def start_detect_rank(
+    task: str = Query(...),
+    model_name: str = Query(...),
+    file: UploadFile = File(...),
+):
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large.")
+    try:
+        handler = get_task_handler(task)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if task == "image":
+        input_data = load_and_validate_image(contents)
+    elif task == "text":
+        input_data = contents.decode("utf-8", errors="replace")
+    else:
+        input_data = contents
+
+    job_id = str(uuid.uuid4())
+    _detect_rank_jobs[job_id] = {
+        "status": "running",
+        "current": 0,
+        "total": 0,
+        "current_explainer": "",
+        "detected_architectures": [],
+        "results": [],
+        "error": None,
+    }
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _run_detect_rank, job_id, task, model_name, input_data)
+    return {"job_id": job_id}
+
+
+@router.get("/detect-rank/{job_id}")
+async def get_detect_rank_status(job_id: str):
+    job = _detect_rank_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @router.get("/validate-model")
