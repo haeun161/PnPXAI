@@ -5,6 +5,7 @@ import TaskSelector from "@/components/TaskSelector";
 import ModelSelector from "@/components/ModelSelector";
 import DataInput from "@/components/DataInput";
 import { getExplainers } from "@/lib/api";
+import NavBar from "@/components/NavBar";
 
 const BASE = "/api";
 
@@ -71,6 +72,28 @@ export default function OptimizerPage() {
 
   useEffect(() => {
     fetch(`${BASE}/optimizer/history`).then((r) => r.json()).then(setHistory).catch(() => {});
+  }, []);
+
+  // Pre-fill from URL params (coming from ResultCard "Optimize" button)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("task");
+    const m = params.get("model");
+    const e = params.get("explainer");
+    const dataUrl = params.get("data_url");
+    if (t) setTask(t as TaskType);
+    if (m) setModel(m);
+    if (e) setExplainer(e);
+    if (dataUrl) {
+      fetch(dataUrl)
+        .then((r) => r.blob())
+        .then((blob) => {
+          setInputFile(blob);
+          if (t === "image") setInputPreview(URL.createObjectURL(blob));
+        })
+        .catch(console.error);
+    }
   }, []);
 
   const handleTaskChange = (t: TaskType) => {
@@ -206,17 +229,7 @@ export default function OptimizerPage() {
 
   return (
     <div className="min-h-screen">
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">XAI Optimizer</h1>
-            <p className="text-sm text-gray-500">Find optimal parameters for XAI explainers</p>
-          </div>
-          <a href="/" className="text-sm text-blue-600 hover:text-blue-700 border border-blue-200 rounded-lg px-3 py-1.5">
-            Back to Analysis
-          </a>
-        </div>
-      </header>
+      <NavBar />
 
       <main className="max-w-7xl mx-auto px-6 py-6">
         <div className="flex gap-6">

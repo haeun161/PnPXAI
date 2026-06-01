@@ -22,11 +22,13 @@ export async function getExplainers(task: TaskType, model?: string): Promise<Exp
   return res.json();
 }
 
-export async function getRecommendedExplainers(task: TaskType, model: string): Promise<string[]> {
+export async function getRecommendedExplainers(
+  task: TaskType,
+  model: string,
+): Promise<{ recommended: string[]; detected_architectures: string[] }> {
   const res = await fetch(`${BASE}/recommend?task=${task}&model=${encodeURIComponent(model)}`);
   if (!res.ok) throw new Error("Failed to fetch recommendations");
-  const data = await res.json();
-  return data.recommended as string[];
+  return res.json();
 }
 
 export async function validateHfModel(task: TaskType, hfModelId: string): Promise<{ model_id: string; display_name: string }> {

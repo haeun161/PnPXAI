@@ -48,14 +48,142 @@ _IMAGE_EXPLAINERS = [
 
 
 class _HFImageWrapper(torch.nn.Module):
-    """Wraps a HuggingFace image classification model to return raw logits tensor."""
+    """Wraps a HuggingFace image classification model to return raw logits tensor.
+    Used as fallback when FX tracing fails. Handles both patched (tuple) and unpatched
+    (output object) model outputs since _patch_hf_conditionals may have run first.
+    """
     def __init__(self, model):
         super().__init__()
         self.model = model
 
     def forward(self, pixel_values):
         out = self.model(pixel_values=pixel_values)
+        if isinstance(out, (tuple, list)):
+            return out[0]
         return out.logits if hasattr(out, "logits") else out
+
+    def __deepcopy__(self, memo):
+        import copy
+        # Deep-copy the underlying model, then re-patch its submodule forwards.
+        # _patch_hf_conditionals closures capture bound methods from the ORIGINAL
+        # model instance; after deepcopy those closures still reference the original,
+        # causing FX path_of_module failures. Re-patching rebinds them to the copy.
+        new_inner = copy.deepcopy(self.model, memo)
+        _patch_hf_conditionals(new_inner)
+        new_wrapper = _HFImageWrapper(new_inner)
+        memo[id(self)] = new_wrapper
+        return new_wrapper
+
+
+class _FXHFLogitsWrapper(torch.nn.Module):
+    """FX-traceable wrapper: traced model output has a .logits attribute."""
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, pixel_values):
+        return self.model(pixel_values).logits
+
+
+class _FXHFTupleWrapper(torch.nn.Module):
+    """FX-traceable wrapper: traced model output is a tuple, logits at index 0."""
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, pixel_values):
+        return self.model(pixel_values)[0]
+
+
+class _FXHFTensorWrapper(torch.nn.Module):
+    """FX-traceable wrapper: traced model already returns a raw tensor."""
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, pixel_values):
+        return self.model(pixel_values)
+
+
+def _patch_hf_conditionals(model: torch.nn.Module) -> None:
+    """Patch all HF submodule forward methods to pass concrete defaults for
+    conditional parameters (return_dict, output_hidden_states, labels, etc.).
+
+    HF models use patterns like:
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        if not return_dict: ...
+    During torch.fx symbolic tracing these become Proxy-based conditions that raise
+    TraceError. By ensuring these params arrive as concrete Python values (False/None),
+    FX can evaluate the branches at trace time and proceed without error.
+
+    Modifies model in-place. Safe on cached models (runs once per model_id).
+    """
+    import functools
+    import inspect
+
+    HF_CONCRETE = {
+        "return_dict":            False,
+        "output_hidden_states":   None,
+        "output_attentions":      None,
+        "labels":                 None,
+        "head_mask":              None,
+        "interpolate_pos_encoding": None,
+        "bool_masked_pos":        None,
+    }
+
+    for _, module in model.named_modules():
+        try:
+            sig = inspect.signature(module.forward)
+        except (TypeError, ValueError):
+            continue
+
+        to_fix = {k: v for k, v in HF_CONCRETE.items() if k in sig.parameters}
+        if not to_fix:
+            continue
+
+        orig = module.forward
+        defaults = dict(to_fix)
+
+        @functools.wraps(orig)
+        def _patched(*args, _f=orig, _d=defaults, **kwargs):
+            for k, v in _d.items():
+                if k not in kwargs:
+                    kwargs[k] = v
+            return _f(*args, **kwargs)
+
+        module.forward = _patched
+
+
+def _try_hf_fx_trace(raw_model: torch.nn.Module) -> Optional[torch.nn.Module]:
+    """Make an HF model FX-traceable by patching submodule conditionals + symbolic_trace.
+
+    Patches raw_model's submodule forwards in-place so HF conditional params
+    (return_dict, etc.) are always concrete during FX tracing. Then runs
+    torch.fx.symbolic_trace to produce a control-flow-free GraphModule that
+    pnpxai can re-trace for GradCam, LRP, RAP.
+
+    Returns a _FXHF*Wrapper on success, or None on failure (falls back to _HFImageWrapper).
+    """
+    try:
+        import torch.fx as fx
+
+        _patch_hf_conditionals(raw_model)
+        traced = fx.symbolic_trace(raw_model)
+
+        dummy = torch.zeros(1, 3, 224, 224)
+        with torch.no_grad():
+            test_out = traced(dummy)
+
+        if hasattr(test_out, "logits"):
+            return _FXHFLogitsWrapper(traced)
+        if isinstance(test_out, (tuple, list)):
+            return _FXHFTupleWrapper(traced)
+        return _FXHFTensorWrapper(traced)
+    except Exception as e:
+        import traceback
+        print(f"[_try_hf_fx_trace] FX tracing failed ({type(e).__name__}): {e}")
+        traceback.print_exc()
+        return None
 
 
 def _check_hf_model_compatibility(model_id: str):
@@ -100,7 +228,7 @@ def _load_hf_image_model(model_id: str) -> dict:
             raise
 
         raw_model.eval()
-        wrapper = _HFImageWrapper(raw_model)
+        wrapper = _try_hf_fx_trace(raw_model) or _HFImageWrapper(raw_model)
         label_map = {}
         if hasattr(raw_model.config, "id2label"):
             label_map = {int(k): v for k, v in raw_model.config.id2label.items()}
@@ -124,26 +252,16 @@ class ImageTaskHandler(TaskHandler):
         ]
 
     def get_explainers(self, model_name: str) -> list[dict]:
-        # zennit's SequentialMergeBatchNorm canonizer fails on DenseNet's dense connections:
-        # it tries to merge a cross-block BatchNorm (96-channel) into conv2 (32-channel),
-        # leaving the model in a corrupted state that breaks subsequent explainers.
-        _DENSENET_INCOMPATIBLE = {"LRPUniformEpsilon", "RAP"}
-        is_densenet = model_name == "densenet121"
-
-        result = []
-        for e in _IMAGE_EXPLAINERS:
-            incompatible = is_densenet and e["name"] in _DENSENET_INCOMPATIBLE
-            result.append({
+        return [
+            {
                 "name": e["name"],
                 "display_name": e["display_name"],
                 "estimated_compute_time_seconds": e["estimated_time"],
-                "compatible": not incompatible,
-                "incompatibility_reason": (
-                    "Not compatible with DenseNet's dense connections (zennit batch norm canonizer fails)."
-                    if incompatible else None
-                ),
-            })
-        return result
+                "compatible": True,
+                "incompatibility_reason": None,
+            }
+            for e in _IMAGE_EXPLAINERS
+        ]
 
     def load_model(self, model_name: str) -> torch.nn.Module:
         if model_name not in _IMAGE_MODELS:

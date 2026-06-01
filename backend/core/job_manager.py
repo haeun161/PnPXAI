@@ -97,6 +97,16 @@ def update_job_predictions(job_id: str, predictions: list[dict]):
             _jobs[job_id]["predictions"] = predictions
 
 
+def update_result_step(job_id: str, explainer_name: str, step: str):
+    """Update the current_step of a running result without replacing the full entry."""
+    with _lock:
+        if job_id in _jobs:
+            for r in _jobs[job_id]["results"]:
+                if r["explainer_name"] == explainer_name:
+                    r["current_step"] = step
+                    break
+
+
 def update_job_result(job_id: str, result: dict):
     """Append or replace a result. No sorting - ranking is done in pipeline.py."""
     with _lock:

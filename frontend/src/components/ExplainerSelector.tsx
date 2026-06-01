@@ -72,7 +72,7 @@ export default function ExplainerSelector({ task, model, selected, onSelect, dis
   if (!task || !model) {
     return (
       <div className="space-y-2">
-        <label className="block text-sm font-semibold text-gray-700">Select Explainers</label>
+        <label className="block text-sm font-semibold text-gray-700">Explainers Information</label>
         <p className="text-xs text-gray-400">{!task ? "Select a task first" : "Select a model first"}</p>
       </div>
     );
@@ -82,7 +82,7 @@ export default function ExplainerSelector({ task, model, selected, onSelect, dis
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <label className="block text-sm font-semibold text-gray-700">
-          Select Explainers
+          Explainers Information
           <span className="font-normal text-gray-400 ml-1">({selected.length}/{explainers.length})</span>
         </label>
         <button

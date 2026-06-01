@@ -18,29 +18,29 @@ export default function PredictionInfo({ dataUrl, predictions, task }: Props) {
   }, [task, dataUrl]);
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-      <h3 className="text-sm font-semibold text-gray-700 mb-3">Original Data & Predictions</h3>
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-4 py-3">
+      <h3 className="text-sm font-semibold text-gray-700 mb-2">Original Data & Predictions</h3>
       <div className="flex gap-4">
         {/* Original data display */}
         {task === "image" && dataUrl && (
-          <img src={dataUrl} alt="Original" className="max-h-64 rounded-lg object-contain border" />
+          <img src={dataUrl} alt="Original" className="max-h-40 rounded-lg object-contain border" />
         )}
         {task === "text" && (
-          <div className="max-h-64 w-64 overflow-y-auto rounded-lg border bg-gray-50 p-3 text-sm text-gray-800 flex-shrink-0">
+          <div className="max-h-40 w-56 overflow-y-auto rounded-lg border bg-gray-50 p-2.5 text-sm text-gray-800 flex-shrink-0">
             {textContent || "Loading..."}
           </div>
         )}
         {task === "timeseries" && (
-          <div className="w-64 h-32 rounded-lg border bg-gray-50 flex items-center justify-center text-xs text-gray-400 flex-shrink-0">
+          <div className="w-56 h-24 rounded-lg border bg-gray-50 flex items-center justify-center text-xs text-gray-400 flex-shrink-0">
             Time-series data loaded
           </div>
         )}
 
         {/* Predictions */}
         {predictions && predictions.length > 0 && (
-          <div className="flex-1 space-y-2">
-            <p className="text-xs font-medium text-gray-500 uppercase">Top-5 Predictions</p>
-            {predictions.map((pred, i) => (
+          <div className="flex-1 space-y-1.5">
+            <p className="text-xs font-medium text-gray-500 uppercase">Top-3 Predictions</p>
+            {predictions.slice(0, 3).map((pred, i) => (
               <div key={i} className="flex items-center gap-2">
                 <div className="flex-1">
                   <div className="flex justify-between text-sm">

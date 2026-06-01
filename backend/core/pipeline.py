@@ -1,5 +1,6 @@
 import copy
 import os
+from typing import Optional
 import numpy as np
 import torch
 
@@ -7,8 +8,89 @@ from backend.tasks import get_task_handler
 from backend.core.pnpxai_adapter import normalize_attribution, extract_metric_value
 from backend.core.job_manager import (
     get_uploaded_data, update_job_status, update_job_predictions,
-    update_job_result, VISUALIZATION_DIR,
+    update_job_result, update_result_step, VISUALIZATION_DIR,
 )
+
+def _find_cam_target_layer(model: torch.nn.Module) -> Optional[torch.nn.Module]:
+    """Return the layer just before global avg-pooling, matching pnpxai's intent.
+
+    Walks named_modules to find AdaptiveAvgPool2d, navigates to its parent container,
+    and returns the preceding sibling (the last encoder block). This gives the same
+    result as pnpxai's find_cam_target_layer for standard architectures (layer4 for
+    ResNet, encoder for HF ResNet, features for VGG) without requiring FX tracing.
+    Falls back to the last Conv2d if no AdaptiveAvgPool2d is found.
+    """
+    for name, mod in model.named_modules():
+        if not isinstance(mod, torch.nn.AdaptiveAvgPool2d):
+            continue
+        parts = name.split(".")
+        # Navigate to the parent of the pool layer
+        if len(parts) == 1:
+            parent = model  # pool is a direct child of the root
+        else:
+            parent = model
+            for part in parts[:-1]:
+                parent = getattr(parent, part, None)
+                if parent is None:
+                    break
+        if parent is None:
+            continue
+        pool_attr = parts[-1]
+        prev_sibling = None
+        for child_name, child_mod in parent.named_children():
+            if child_name == pool_attr:
+                if prev_sibling is not None:
+                    return prev_sibling
+            else:
+                prev_sibling = child_mod
+
+    # Fallback: last Conv2d in the model
+    last_conv = None
+    for m in model.modules():
+        if isinstance(m, torch.nn.Conv2d):
+            last_conv = m
+    return last_conv
+
+
+def _apply_gradcam_patch() -> None:
+    """Monkey-patch GradCam.attribute to honour set_target_layer.
+
+    pnpxai's GradCam.attribute() hardcodes `layer = find_cam_target_layer(self.model)`
+    (line 69 of grad_cam.py), completely ignoring self._layer / self.layer. This means
+    set_target_layer() has no effect on the actual attribution. The patch replaces the
+    method so it uses self.layer (which DOES respect _layer) instead.
+    """
+    try:
+        from pnpxai.explainers.grad_cam import GradCam
+        from captum.attr import LayerGradCam, LayerAttribution
+        from pnpxai.utils import format_into_tuple
+
+        def _fixed_attribute(self, inputs, targets):
+            forward_args, additional_forward_args = self._extract_forward_args(inputs)
+            forward_args = format_into_tuple(forward_args)
+            additional_forward_args = format_into_tuple(additional_forward_args)
+            assert len(forward_args) == 1, "GradCam for multiple inputs is not supported yet."
+            layer = self.layer  # respects _layer set by set_target_layer
+            print(f"[GradCam] using target layer: {type(layer).__name__} — {layer}")
+            captum_explainer = LayerGradCam(forward_func=self.model, layer=layer)
+            attrs = captum_explainer.attribute(
+                forward_args[0],
+                target=targets,
+                additional_forward_args=additional_forward_args,
+                attr_dim_summation=True,
+            )
+            return LayerAttribution.interpolate(
+                layer_attribution=attrs,
+                interpolate_dims=forward_args[0].shape[2:],
+                interpolate_mode=self.interpolate_mode,
+            )
+
+        GradCam.attribute = _fixed_attribute
+    except Exception as e:
+        print(f"[pipeline] Could not patch GradCam.attribute: {e}")
+
+
+_apply_gradcam_patch()
 
 # ImageNet class labels
 _imagenet_labels: list[str] = []
@@ -154,6 +236,8 @@ def run_explanation_pipeline(
         handler = get_task_handler(task)
         model = handler.load_model(model_name)
 
+        # (No HF-model flag needed — target layer is set explicitly for all image models.)
+
         raw_data = get_uploaded_data(job_id)
         if raw_data is None:
             update_job_status(job_id, "failed", "Uploaded data not found.")
@@ -211,10 +295,24 @@ def run_explanation_pipeline(
             exp_info = next((e for e in handler.get_explainers(model_name) if e["name"] == exp_name), None)
             display_name = exp_info["display_name"] if exp_info else exp_name
 
+            _ATTRIBUTION_STEP = {
+                "Lime":                  "Generating perturbations",
+                "KernelShap":            "Generating perturbations",
+                "GradCam":               "Extracting feature maps",
+                "GuidedGradCam":         "Extracting feature maps",
+                "LRPUniformEpsilon":     "Propagating relevance",
+                "LRPEpsilonPlus":        "Propagating relevance",
+                "LRPEpsilonGammaBox":    "Propagating relevance",
+                "LRPEpsilonAlpha2Beta1": "Propagating relevance",
+                "RAP":                   "Propagating relevance",
+            }
+            attribution_step = _ATTRIBUTION_STEP.get(exp_name, "Computing gradients")
+
             update_job_result(job_id, {
                 "explainer_name": exp_name,
                 "display_name": display_name,
                 "status": "running",
+                "current_step": "Initializing explainer",
             })
 
             try:
@@ -245,7 +343,22 @@ def run_explanation_pipeline(
                         active_inp = active_inp.requires_grad_(True)
                     explainer_instance = ExplainerClass(active_model)
 
+                # GradCam / GuidedGradCam: always set the target layer explicitly for
+                # all image models (both built-in and HF). pnpxai's FX-based
+                # find_cam_target_layer can fail for ResNet-50 and other standard
+                # architectures if symbolic_trace encounters issues. Using our robust
+                # _find_cam_target_layer (AdaptiveAvgPool2d sibling walk) avoids this.
+                # Note: GradCam.attribute was monkey-patched above to honour self.layer;
+                # GuidedGradCam.attribute already uses self.layer correctly.
+                if task == "image" and exp_name in {"GradCam", "GuidedGradCam"} and hasattr(explainer_instance, "set_target_layer"):
+                    cam_target = _find_cam_target_layer(active_model)
+                    if cam_target is not None:
+                        print(f"[{exp_name}] Setting target layer ({model_name}): {type(cam_target).__name__}")
+                        # set_target_layer returns a new instance (set_kwargs clones) — must reassign
+                        explainer_instance = explainer_instance.set_target_layer(cam_target)
+
                 # Compute attribution
+                update_result_step(job_id, exp_name, attribution_step)
                 target_tensor = torch.tensor([target_class], dtype=torch.long)
                 if active_inp is not None:
                     try:
@@ -259,8 +372,15 @@ def run_explanation_pipeline(
 
                 # Compute metrics (MuFidelity not compatible with text embeddings)
                 metric_values = {}
+                _METRIC_LABELS = {
+                    "MuFidelity": "Evaluating Fidelity",
+                    "AbPC":       "Evaluating AbPC",
+                    "Sensitivity": "Evaluating Sensitivity",
+                    "Complexity":  "Evaluating Complexity",
+                }
                 metric_list = ["AbPC", "Sensitivity", "Complexity"] if task == "text" else ["MuFidelity", "AbPC", "Sensitivity", "Complexity"]
                 for metric_name in metric_list:
+                    update_result_step(job_id, exp_name, _METRIC_LABELS[metric_name])
                     try:
                         metric_instance = _get_pnpxai_metric(metric_name, active_model, explainer_instance)
                         if active_inp is not None:
@@ -274,6 +394,7 @@ def run_explanation_pipeline(
                         metric_values[metric_name.lower()] = None
 
                 # Render visualization
+                update_result_step(job_id, exp_name, "Generating heatmap")
                 viz_path = os.path.join(job_dir, f"{exp_name}.png")
                 if tokens_for_viz:
                     viz_input = tokens_for_viz
