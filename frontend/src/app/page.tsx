@@ -4,7 +4,7 @@ import { TaskType } from "@/lib/types";
 import TaskSelector from "@/components/TaskSelector";
 import DataInput from "@/components/DataInput";
 import ModelSelector from "@/components/ModelSelector";
-import ExplainerDetectionModal from "@/components/ExplainerDetectionModal";
+import ExplainerDetectionModal, { DetectionCache } from "@/components/ExplainerDetectionModal";
 import ExplainerSelector from "@/components/ExplainerSelector";
 import RankingMetricSelector from "@/components/RankingMetricSelector";
 import PredictionInfo from "@/components/PredictionInfo";
@@ -19,15 +19,22 @@ export default function Home() {
   const [explainers, setExplainers] = useState<string[]>([]);
   const [rankingMetric, setRankingMetric] = useState("average");
   const [detectionOpen, setDetectionOpen] = useState(false);
+  const [detectionCache, setDetectionCache] = useState<DetectionCache>({
+    state: "idle", job: null, selected: [], error: null,
+  });
   const { job, loading, error, startJob, reset } = useExplainJob();
 
   const canRun = task && inputData && model && explainers.length > 0 && !loading;
+
+  const resetDetectionCache = () =>
+    setDetectionCache({ state: "idle", job: null, selected: [], error: null });
 
   const handleTaskChange = (t: TaskType) => {
     setTask(t);
     setModel("");
     setExplainers([]);
     setInputData(null);
+    resetDetectionCache();
   };
 
   const handleRun = () => {
@@ -53,7 +60,7 @@ export default function Home() {
           {/* Left Panel */}
           <div className="w-80 flex-shrink-0 space-y-4">
             <TaskSelector selected={task} onSelect={handleTaskChange} disabled={loading} />
-            <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); setExplainers([]); }} disabled={loading} />
+            <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); setExplainers([]); resetDetectionCache(); }} disabled={loading} />
             <DataInput task={task} onDataReady={(data) => setInputData(data)} disabled={loading} />
 
             {/* Explainer Detection */}
@@ -102,6 +109,8 @@ export default function Home() {
                 task={task as TaskType}
                 model={model}
                 inputData={inputData}
+                cache={detectionCache}
+                onCacheChange={setDetectionCache}
                 onSave={setExplainers}
                 onClose={() => setDetectionOpen(false)}
               />

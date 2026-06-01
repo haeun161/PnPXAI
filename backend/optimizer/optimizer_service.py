@@ -192,7 +192,8 @@ def _run_image_optimization(model_name, explainer_name, metric_name, input_data,
     from torch.utils.data import DataLoader, TensorDataset
     import optuna
     from pnpxai import AutoExplanationForImageClassification
-    from backend.core.pipeline import _run_image_inference
+    from pnpxai.core.experiment.experiment import Objective, load_sampler
+    from backend.core.pipeline import _run_image_inference, _get_pnpxai_explainer, _get_pnpxai_metric
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -203,6 +204,7 @@ def _run_image_optimization(model_name, explainer_name, metric_name, input_data,
     target_class, predictions, _ = _run_image_inference(model, input_tensor, hf_label_map)
     target_tensor = torch.tensor([target_class])
 
+    # Build AutoExplanation only to get modality + postprocessors (no output cache needed)
     loader = DataLoader(TensorDataset(input_tensor, target_tensor), batch_size=1)
     expr = AutoExplanationForImageClassification(
         model=model,
@@ -213,46 +215,49 @@ def _run_image_optimization(model_name, explainer_name, metric_name, input_data,
         target_labels=False,
     )
 
-    # Locate explainer (append if not in recommended list)
+    # Get or create the explainer instance
     explainer_class_names = [e.__class__.__name__ for e in expr.manager.explainers]
-    if explainer_name not in explainer_class_names:
-        from pnpxai import explainers as exp_mod
-        ExplainerClass = getattr(exp_mod, explainer_name, None)
-        if ExplainerClass is None:
-            raise ValueError(f"Unknown explainer: {explainer_name}")
-        expr.manager.explainers.append(ExplainerClass(model=model))
-    explainer_id = [e.__class__.__name__ for e in expr.manager.explainers].index(explainer_name)
+    if explainer_name in explainer_class_names:
+        explainer_id = explainer_class_names.index(explainer_name)
+        explainer_inst = expr.manager.get_explainer_by_id(explainer_id)
+    else:
+        ExplainerClass = _get_pnpxai_explainer(explainer_name)
+        explainer_inst = ExplainerClass(model=model)
 
-    metric_id = _METRIC_ORDER.index(metric_name) if metric_name in _METRIC_ORDER else 1  # AbPC default
+    postprocessor = expr.manager.get_postprocessor_by_id(0)
+
+    metric_cls_name = metric_name if metric_name in _METRIC_ORDER else "AbPC"
+    metric = _get_pnpxai_metric(metric_cls_name, model, explainer_inst)
 
     # Default attribution + metrics
     inp_def = input_tensor.clone().requires_grad_(True)
-    default_explainer = expr.manager.get_explainer_by_id(explainer_id)
-    default_attr = default_explainer.attribute(inp_def, target_tensor)
-    default_metrics = _eval_all_metrics(model, default_explainer, inp_def, target_tensor, default_attr)
+    default_attr = explainer_inst.attribute(inp_def, target_tensor)
+    default_metrics = _eval_all_metrics(model, explainer_inst, inp_def, target_tensor, default_attr)
 
-    # Optimize via pnpxai (optuna TPE under the hood)
-    opt_output = expr.optimize(
-        data_ids=[0],
-        explainer_id=explainer_id,
-        metric_id=metric_id,
-        direction="maximize",
-        sampler="tpe",
-        n_trials=n_trials,
-        seed=42,
+    # Optimize via Objective + optuna directly (avoids output-cache requirement of expr.optimize)
+    inp_opt = input_tensor.clone().requires_grad_(True)
+    objective = Objective(
+        explainer=explainer_inst,
+        postprocessor=postprocessor,
+        metric=metric,
+        modality=expr.modality,
+        inputs=inp_opt,
+        targets=target_tensor,
     )
+    study = optuna.create_study(sampler=load_sampler("tpe", seed=42), direction="maximize")
+    study.optimize(objective, n_trials=n_trials, n_jobs=1)
 
     # Optimized attribution + metrics
-    opt_explainer = opt_output.explainer
-    inp_opt = input_tensor.clone().requires_grad_(True)
-    opt_attr = opt_explainer.attribute(inp_opt, target_tensor)
-    optimized_metrics = _eval_all_metrics(model, opt_explainer, inp_opt, target_tensor, opt_attr)
+    opt_explainer = study.best_trial.user_attrs["explainer"]
+    inp_result = input_tensor.clone().requires_grad_(True)
+    opt_attr = opt_explainer.attribute(inp_result, target_tensor)
+    optimized_metrics = _eval_all_metrics(model, opt_explainer, inp_result, target_tensor, opt_attr)
     opt_attribution = normalize_attribution(opt_attr)
 
     # Extract explainer-specific params from best trial
     available_params = get_explainer_params(explainer_name)
     default_params = {p["name"]: p["default"] for p in available_params}
-    trial_params = opt_output.study.best_trial.params
+    trial_params = study.best_trial.params
     opt_params = {
         k[len("explainer/"):]: v
         for k, v in trial_params.items()
@@ -274,7 +279,7 @@ def _run_image_optimization(model_name, explainer_name, metric_name, input_data,
         available_params, default_params, optimized_params,
         default_metrics, optimized_metrics,
         predictions, f"/api/jobs/{viz_id}/visualizations/{explainer_name}.png",
-        opt_attribution, opt_output.study.best_value,
+        opt_attribution, study.best_value,
     )
 
 

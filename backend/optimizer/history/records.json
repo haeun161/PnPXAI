@@ -1,144 +1,55 @@
 [
   {
-    "record_id": "7a0fa89d",
-    "task": "image",
-    "model_name": "vgg16",
-    "explainer_name": "Gradient",
-    "metric_name": "AbPC",
-    "default_params": {},
-    "optimized_params": {},
-    "default_metrics": {
-      "complexity": 0.3624691062091191
-    },
-    "optimized_metrics": {
-      "complexity": 0.3624691062091191
-    },
-    "available_params": [],
-    "predictions": [
-      {
-        "class_name": "African elephant",
-        "probability": 52.87
-      },
-      {
-        "class_name": "Indian elephant",
-        "probability": 46.17
-      },
-      {
-        "class_name": "tusker",
-        "probability": 0.95
-      },
-      {
-        "class_name": "water buffalo",
-        "probability": 0.0
-      },
-      {
-        "class_name": "Arabian camel",
-        "probability": 0.0
-      }
-    ],
-    "visualization_url": "/api/jobs/opt_1780288295326/visualizations/Gradient.png",
-    "attribution_summary": {
-      "mean": 0.03578856959939003,
-      "max": 1.0,
-      "nonzero_ratio": 0.06395487882653061
-    },
-    "timestamp": 1780288296.9478369
+    "error": "Unsupported task: timeseries"
   },
   {
-    "record_id": "549726fc",
+    "error": "Unsupported task: timeseries"
+  },
+  {
+    "record_id": "56dbc402",
     "task": "image",
     "model_name": "resnet50",
-    "explainer_name": "LRPUniformEpsilon",
+    "explainer_name": "KernelShap",
     "metric_name": "AbPC",
     "default_params": {
-      "epsilon": 0.25,
-      "stabilizer": 1e-06
+      "n_samples": 25,
+      "baseline_fn": "zeros",
+      "feature_mask_fn": "felzenszwalb"
     },
     "optimized_params": {
-      "epsilon": 0.25,
-      "stabilizer": 1e-06
+      "n_samples": 25,
+      "baseline_fn": "zeros",
+      "feature_mask_fn": "felzenszwalb"
     },
     "default_metrics": {
-      "complexity": 0.8063342844362654
+      "mu_fidelity": -0.017734121516511846,
+      "abpc": 0.07783796638250351,
+      "sensitivity": 1.8778611421585083,
+      "complexity": 1.0886817891037248
     },
     "optimized_metrics": {
-      "complexity": 0.8063342844362654
+      "mu_fidelity": -0.06994977554557981,
+      "abpc": -0.22835436463356018,
+      "sensitivity": 2.030822277069092,
+      "complexity": 1.9852823162752444
     },
     "available_params": [
       {
-        "name": "epsilon",
-        "type": "float",
-        "default": 0.25,
+        "name": "n_samples",
+        "type": "int",
+        "default": 25,
         "description": ""
       },
       {
-        "name": "stabilizer",
-        "type": "float",
-        "default": 1e-06,
-        "description": ""
-      }
-    ],
-    "predictions": [
-      {
-        "class_name": "African elephant",
-        "probability": 33.91
-      },
-      {
-        "class_name": "Indian elephant",
-        "probability": 28.61
-      },
-      {
-        "class_name": "tusker",
-        "probability": 3.69
-      },
-      {
-        "class_name": "sandbar",
-        "probability": 0.52
-      },
-      {
-        "class_name": "promontory",
-        "probability": 0.26
-      }
-    ],
-    "visualization_url": "/api/jobs/opt_1779784656684/visualizations/LRPUniformEpsilon.png",
-    "attribution_summary": {
-      "mean": 0.03464433550834656,
-      "max": 1.0,
-      "nonzero_ratio": 0.06776147959183673
-    },
-    "timestamp": 1779784661.367514
-  },
-  {
-    "record_id": "422cd6d8",
-    "task": "image",
-    "model_name": "resnet50",
-    "explainer_name": "LRPUniformEpsilon",
-    "metric_name": "AbPC",
-    "default_params": {
-      "epsilon": 0.25,
-      "stabilizer": 1e-06
-    },
-    "optimized_params": {
-      "epsilon": 0.25,
-      "stabilizer": 1e-06
-    },
-    "default_metrics": {
-      "complexity": 0.2321436073946658
-    },
-    "optimized_metrics": {
-      "complexity": 0.2321436073946658
-    },
-    "available_params": [
-      {
-        "name": "epsilon",
-        "type": "float",
-        "default": 0.25,
+        "name": "baseline_fn",
+        "type": "str",
+        "default": "zeros",
         "description": ""
       },
       {
-        "name": "stabilizer",
-        "type": "float",
-        "default": 1e-06,
+        "name": "feature_mask_fn",
+        "type": "str",
+        "default": "felzenszwalb",
         "description": ""
       }
     ],
@@ -164,16 +75,17 @@
         "probability": 0.71
       }
     ],
-    "visualization_url": "/api/jobs/opt_1779770050464/visualizations/LRPUniformEpsilon.png",
+    "visualization_url": "/api/jobs/opt_1780293947293/visualizations/KernelShap.png",
     "attribution_summary": {
-      "mean": 0.013487032614648342,
+      "mean": 0.2756567895412445,
       "max": 1.0,
-      "nonzero_ratio": 0.014947385204081632
+      "nonzero_ratio": 0.7644889987244898
     },
-    "timestamp": 1779770052.3963985
+    "timestamp": 1780293947.7749486,
+    "best_trial_value": 0.27023035287857056
   },
   {
-    "record_id": "5e7688e7",
+    "record_id": "589132a0",
     "task": "image",
     "model_name": "resnet50",
     "explainer_name": "IntegratedGradients",
@@ -187,10 +99,16 @@
       "baseline_fn": "zeros"
     },
     "default_metrics": {
-      "complexity": 0.2739732684881252
+      "mu_fidelity": -0.05855015778479044,
+      "abpc": 0.048498742282390594,
+      "sensitivity": 1.141778588294983,
+      "complexity": 0.27395516442298273
     },
     "optimized_metrics": {
-      "complexity": 0.2739732684881252
+      "mu_fidelity": -0.3364896217609672,
+      "abpc": 0.00040934831486083567,
+      "sensitivity": 1.1797031164169312,
+      "complexity": 0.17520237303960445
     },
     "available_params": [
       {
@@ -228,84 +146,16 @@
         "probability": 0.71
       }
     ],
-    "visualization_url": "/api/jobs/opt_1779770037485/visualizations/IntegratedGradients.png",
+    "visualization_url": "/api/jobs/opt_1780291946322/visualizations/IntegratedGradients.png",
     "attribution_summary": {
-      "mean": 0.02677845023572445,
+      "mean": 0.023865561932325363,
       "max": 1.0,
-      "nonzero_ratio": 0.055963010204081634
+      "nonzero_ratio": 0.04017857142857143
     },
-    "timestamp": 1779770039.5777245
+    "timestamp": 1780291946.948784,
+    "best_trial_value": 0.30548474192619324
   },
   {
-    "record_id": "34522ae9",
-    "task": "image",
-    "model_name": "resnet50",
-    "explainer_name": "Lime",
-    "metric_name": "AbPC",
-    "default_params": {
-      "n_samples": 25,
-      "baseline_fn": "zeros",
-      "feature_mask_fn": "felzenszwalb"
-    },
-    "optimized_params": {
-      "n_samples": 25,
-      "baseline_fn": "zeros",
-      "feature_mask_fn": "felzenszwalb"
-    },
-    "default_metrics": {
-      "complexity": 0.39478964922816223
-    },
-    "optimized_metrics": {
-      "complexity": 0.39478964922816223
-    },
-    "available_params": [
-      {
-        "name": "n_samples",
-        "type": "int",
-        "default": 25,
-        "description": ""
-      },
-      {
-        "name": "baseline_fn",
-        "type": "str",
-        "default": "zeros",
-        "description": ""
-      },
-      {
-        "name": "feature_mask_fn",
-        "type": "str",
-        "default": "felzenszwalb",
-        "description": ""
-      }
-    ],
-    "predictions": [
-      {
-        "class_name": "African elephant",
-        "probability": 33.91
-      },
-      {
-        "class_name": "Indian elephant",
-        "probability": 28.61
-      },
-      {
-        "class_name": "tusker",
-        "probability": 3.69
-      },
-      {
-        "class_name": "sandbar",
-        "probability": 0.52
-      },
-      {
-        "class_name": "promontory",
-        "probability": 0.26
-      }
-    ],
-    "visualization_url": "/api/jobs/opt_1779766779408/visualizations/Lime.png",
-    "attribution_summary": {
-      "mean": 0.026348358020186424,
-      "max": 1.0,
-      "nonzero_ratio": 0.07280373086734694
-    },
-    "timestamp": 1779766780.9562292
+    "error": "Unsupported task: timeseries"
   }
 ]

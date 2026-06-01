@@ -21,10 +21,19 @@ interface DetectJob {
   error: string | null;
 }
 
+export interface DetectionCache {
+  state: "idle" | "running" | "completed" | "error";
+  job: DetectJob | null;
+  selected: string[];
+  error: string | null;
+}
+
 interface Props {
   task: TaskType;
   model: string;
   inputData: File | Blob | null;
+  cache: DetectionCache;
+  onCacheChange: (c: DetectionCache) => void;
   onSave: (selected: string[]) => void;
   onClose: () => void;
 }
@@ -56,12 +65,23 @@ const ARCH_COLORS: Record<string, string> = {
   Pool: "bg-gray-100 text-gray-600 border-gray-200",
 };
 
-export default function ExplainerDetectionModal({ task, model, inputData, onSave, onClose }: Props) {
-  const [state, setState] = useState<State>("idle");
-  const [job, setJob] = useState<DetectJob | null>(null);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+export default function ExplainerDetectionModal({ task, model, inputData, cache, onCacheChange, onSave, onClose }: Props) {
+  const [state, setStateRaw] = useState<State>(cache.state);
+  const [job, setJobRaw] = useState<DetectJob | null>(cache.job);
+  const [selected, setSelectedRaw] = useState<string[]>(cache.selected);
+  const [error, setErrorRaw] = useState<string | null>(cache.error);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const setState = (s: State) => { setStateRaw(s); onCacheChange({ ...cache, state: s }); };
+  const setJob = (j: DetectJob | null) => { setJobRaw(j); onCacheChange({ ...cache, job: j }); };
+  const setSelected = (sel: string[] | ((prev: string[]) => string[])) => {
+    setSelectedRaw((prev) => {
+      const next = typeof sel === "function" ? sel(prev) : sel;
+      onCacheChange({ ...cache, selected: next });
+      return next;
+    });
+  };
+  const setError = (e: string | null) => { setErrorRaw(e); onCacheChange({ ...cache, error: e }); };
 
   useEffect(() => {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
@@ -92,20 +112,27 @@ export default function ExplainerDetectionModal({ task, model, inputData, onSave
         try {
           const r = await fetch(`/api/detect-rank/${job_id}`);
           const data: DetectJob = await r.json();
-          setJob(data);
+          setJobRaw(data);
           if (data.status === "completed") {
             clearInterval(pollRef.current!);
-            setSelected(data.results.slice(0, 5).map((r) => r.name));
-            setState("completed");
+            const sel = data.results.slice(0, 5).map((r) => r.name);
+            setSelectedRaw(sel);
+            setStateRaw("completed");
+            onCacheChange({ state: "completed", job: data, selected: sel, error: null });
           } else if (data.status === "error") {
             clearInterval(pollRef.current!);
-            setError(data.error || "Detection failed");
-            setState("error");
+            const msg = data.error || "Detection failed";
+            setErrorRaw(msg);
+            setStateRaw("error");
+            onCacheChange({ state: "error", job: data, selected: [], error: msg });
+          } else {
+            onCacheChange({ state: "running", job: data, selected: [], error: null });
           }
         } catch {
           clearInterval(pollRef.current!);
-          setError("Polling failed");
-          setState("error");
+          setErrorRaw("Polling failed");
+          setStateRaw("error");
+          onCacheChange({ state: "error", job: null, selected: [], error: "Polling failed" });
         }
       }, 1500);
     } catch (e: any) {
@@ -123,10 +150,9 @@ export default function ExplainerDetectionModal({ task, model, inputData, onSave
 
   const handleRedetect = () => {
     if (pollRef.current) clearInterval(pollRef.current);
-    setState("idle");
-    setJob(null);
-    setSelected([]);
-    setError(null);
+    const reset: DetectionCache = { state: "idle", job: null, selected: [], error: null };
+    setStateRaw("idle"); setJobRaw(null); setSelectedRaw([]); setErrorRaw(null);
+    onCacheChange(reset);
   };
 
   const pct = job && job.total > 0 ? Math.round((job.current / job.total) * 100) : 0;

@@ -186,6 +186,22 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
             target_tensor = torch.tensor([target_class], dtype=torch.long)
             explainer_model = wrap
             wrapper_model = wrap
+        elif task == "timeseries":
+            proc = handler.preprocess_input(input_data)
+            if isinstance(proc, dict) and "tensor" in proc:
+                ts_tensor = proc["tensor"]
+                num_ch = ts_tensor.shape[1]
+                model = handler.load_model(model_name, num_input_channels=num_ch)
+                explainer_model = model
+                model.eval()
+                with torch.no_grad():
+                    out = model(ts_tensor)
+                target_class = int(out.argmax(dim=1).item())
+                input_tensor = ts_tensor
+            else:
+                input_tensor = proc if isinstance(proc, torch.Tensor) else None
+                target_class = 0
+            target_tensor = torch.tensor([target_class], dtype=torch.long)
 
         _STATE_MUTATING = {"LRPUniformEpsilon", "LRPEpsilonPlus", "LRPEpsilonGammaBox", "LRPEpsilonAlpha2Beta1", "RAP"}
         METRIC_KEYS = [("mu_fidelity", "MuFidelity"), ("abpc", "AbPC"),
