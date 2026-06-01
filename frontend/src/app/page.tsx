@@ -69,7 +69,7 @@ export default function Home() {
           <div className="w-80 flex-shrink-0 space-y-4">
             <TaskSelector selected={task} onSelect={handleTaskChange} disabled={loading} />
             <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); setExplainers([]); }} disabled={loading} />
-            <DataInput task={task} onDataReady={(data) => setInputData(data)} disabled={loading} />
+            <DataInput task={task} model={model} onDataReady={(data) => setInputData(data)} disabled={loading} />
             <ExplainerSelector task={task} model={model} selected={explainers} onSelect={setExplainers} disabled={loading} />
 
             <button

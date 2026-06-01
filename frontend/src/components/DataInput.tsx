@@ -8,11 +8,12 @@ import SampleDataSelector from "./SampleDataSelector";
 
 interface Props {
   task: TaskType | "";
+  model?: string;
   onDataReady: (data: File | Blob, preview: string) => void;
   disabled?: boolean;
 }
 
-export default function DataInput({ task, onDataReady, disabled }: Props) {
+export default function DataInput({ task, model, onDataReady, disabled }: Props) {
   const [mode, setMode] = useState<"sample" | "upload">("sample");
 
   if (!task) return null;
@@ -50,7 +51,7 @@ export default function DataInput({ task, onDataReady, disabled }: Props) {
         {/* Content */}
         <div className="bg-white p-3 max-h-52 overflow-y-auto">
           {mode === "sample" && (
-            <SampleDataSelector task={task} onSampleSelect={onDataReady} disabled={disabled} />
+            <SampleDataSelector task={task} model={model} onSampleSelect={onDataReady} disabled={disabled} />
           )}
 
           {mode === "upload" && (

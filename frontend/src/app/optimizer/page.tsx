@@ -228,7 +228,7 @@ export default function OptimizerPage() {
               <>
                 <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); setExplainer(""); }} disabled={loading} />
 
-                <DataInput task={task} onDataReady={(data, preview) => { setInputFile(data); setInputPreview(preview); }} disabled={loading} />
+                <DataInput task={task} model={model} onDataReady={(data, preview) => { setInputFile(data); setInputPreview(preview); }} disabled={loading} />
 
                 {model && (
                   <div className="space-y-2">

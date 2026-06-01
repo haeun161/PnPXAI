@@ -252,7 +252,7 @@ def run_explanation_pipeline(
                         attribution_raw = explainer_instance.attribute(active_inp, target_tensor)
                     except TypeError:
                         attribution_raw = explainer_instance.attribute(inputs=active_inp, targets=target_tensor)
-                    attribution = normalize_attribution(attribution_raw)
+                    attribution = normalize_attribution(attribution_raw, task=task)
                 else:
                     attribution = np.zeros(10)
                     attribution_raw = torch.zeros(1, 10)
@@ -275,7 +275,12 @@ def run_explanation_pipeline(
 
                 # Render visualization
                 viz_path = os.path.join(job_dir, f"{exp_name}.png")
-                viz_input = tokens_for_viz if tokens_for_viz else raw_data
+                if tokens_for_viz:
+                    viz_input = tokens_for_viz
+                elif task == "timeseries" and isinstance(input_data, dict):
+                    viz_input = input_data
+                else:
+                    viz_input = raw_data
                 handler.render_result(attribution, viz_input, viz_path)
 
                 # Build token attribution data for frontend highlighting (text only)

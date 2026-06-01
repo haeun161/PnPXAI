@@ -1,5 +1,50 @@
 [
   {
+    "record_id": "7a0fa89d",
+    "task": "image",
+    "model_name": "vgg16",
+    "explainer_name": "Gradient",
+    "metric_name": "AbPC",
+    "default_params": {},
+    "optimized_params": {},
+    "default_metrics": {
+      "complexity": 0.3624691062091191
+    },
+    "optimized_metrics": {
+      "complexity": 0.3624691062091191
+    },
+    "available_params": [],
+    "predictions": [
+      {
+        "class_name": "African elephant",
+        "probability": 52.87
+      },
+      {
+        "class_name": "Indian elephant",
+        "probability": 46.17
+      },
+      {
+        "class_name": "tusker",
+        "probability": 0.95
+      },
+      {
+        "class_name": "water buffalo",
+        "probability": 0.0
+      },
+      {
+        "class_name": "Arabian camel",
+        "probability": 0.0
+      }
+    ],
+    "visualization_url": "/api/jobs/opt_1780288295326/visualizations/Gradient.png",
+    "attribution_summary": {
+      "mean": 0.03578856959939003,
+      "max": 1.0,
+      "nonzero_ratio": 0.06395487882653061
+    },
+    "timestamp": 1780288296.9478369
+  },
+  {
     "record_id": "549726fc",
     "task": "image",
     "model_name": "resnet50",
@@ -262,69 +307,5 @@
       "nonzero_ratio": 0.07280373086734694
     },
     "timestamp": 1779766780.9562292
-  },
-  {
-    "record_id": "cd912ab3",
-    "task": "image",
-    "model_name": "resnet50",
-    "explainer_name": "SmoothGrad",
-    "metric_name": "AbPC",
-    "default_params": {
-      "noise_level": 0.1,
-      "n_iter": 20
-    },
-    "optimized_params": {
-      "noise_level": 0.1,
-      "n_iter": 20
-    },
-    "default_metrics": {
-      "complexity": 0.8410365539211998
-    },
-    "optimized_metrics": {
-      "complexity": 0.8410365539211998
-    },
-    "available_params": [
-      {
-        "name": "noise_level",
-        "type": "float",
-        "default": 0.1,
-        "description": ""
-      },
-      {
-        "name": "n_iter",
-        "type": "int",
-        "default": 20,
-        "description": ""
-      }
-    ],
-    "predictions": [
-      {
-        "class_name": "African elephant",
-        "probability": 33.91
-      },
-      {
-        "class_name": "Indian elephant",
-        "probability": 28.61
-      },
-      {
-        "class_name": "tusker",
-        "probability": 3.69
-      },
-      {
-        "class_name": "sandbar",
-        "probability": 0.52
-      },
-      {
-        "class_name": "promontory",
-        "probability": 0.26
-      }
-    ],
-    "visualization_url": "/api/jobs/opt_1779766061666/visualizations/SmoothGrad.png",
-    "attribution_summary": {
-      "mean": 0.05383441969752312,
-      "max": 1.0,
-      "nonzero_ratio": 0.13301179846938777
-    },
-    "timestamp": 1779766062.662189
   }
 ]

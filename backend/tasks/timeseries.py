@@ -98,20 +98,6 @@ _TS_MODELS = {
         "description": "InceptionTime classifier (Fawaz et al., 2020). Auto-adapts to multi-variate input.",
         "loader": InceptionTimeModel,
     },
-    "simple-cnn-multi": {
-        "display_name": "Simple 1D CNN (Multi-variate)",
-        "architecture": "1D CNN",
-        "description": "Simple 1D CNN pre-configured for 3-channel multi-variate data (e.g. sensor_multivariate sample).",
-        "loader": SimpleTimeSeriesModel,
-        "default_channels": 3,
-    },
-    "inception-time-multi": {
-        "display_name": "InceptionTime (Multi-variate)",
-        "architecture": "InceptionTime",
-        "description": "InceptionTime pre-configured for 3-channel multi-variate data.",
-        "loader": InceptionTimeModel,
-        "default_channels": 3,
-    },
 }
 
 
@@ -194,20 +180,40 @@ class TimeSeriesTaskHandler(TaskHandler):
         return TimeSeriesModality()
 
     def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str) -> str:
-        if isinstance(input_data, dict):
-            tensor = input_data["tensor"]
-            col_names = input_data["col_names"]
-            signals = tensor.squeeze(0).numpy()  # (num_channels, seq_len)
-        elif isinstance(input_data, torch.Tensor):
-            signals = input_data.squeeze(0).numpy()
-            if signals.ndim == 1:
-                signals = signals.reshape(1, -1)
-            col_names = [f"var_{i+1}" for i in range(signals.shape[0])]
-        elif isinstance(input_data, bytes):
-            tensor, col_names = _parse_ts_csv(input_data)
-            signals = tensor.squeeze(0).numpy()
-        else:
-            signals = np.zeros((1, max(len(attribution), 10)))
+        try:
+            if isinstance(input_data, dict):
+                tensor = input_data["tensor"]
+                col_names = input_data["col_names"]
+                signals = tensor.squeeze(0).detach().cpu().numpy()
+
+            elif isinstance(input_data, torch.Tensor):
+                signals = input_data.squeeze(0).detach().cpu().numpy()
+
+                if signals.ndim == 1:
+                    signals = signals.reshape(1, -1)
+
+                col_names = [f"var_{i+1}" for i in range(signals.shape[0])]
+
+            elif isinstance(input_data, bytes):
+                tensor, col_names = _parse_ts_csv(input_data)
+                signals = tensor.squeeze(0).detach().cpu().numpy()
+
+            else:
+                attr_len = (
+                    len(attribution.flatten())
+                    if hasattr(attribution, "flatten")
+                    else 10
+                )
+                signals = np.zeros((1, max(attr_len, 10)))
+                col_names = ["value"]
+
+        except Exception:
+            attr_len = (
+                len(attribution.flatten())
+                if hasattr(attribution, "flatten")
+                else 10
+            )
+            signals = np.zeros((1, max(attr_len, 10)))
             col_names = ["value"]
 
         return render_timeseries_attribution(signals, attribution, output_path, col_names)
