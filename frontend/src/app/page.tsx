@@ -10,7 +10,6 @@ import PredictionInfo from "@/components/PredictionInfo";
 import ResultsPanel from "@/components/ResultsPanel";
 import ProgressIndicator from "@/components/ProgressIndicator";
 import { useExplainJob } from "@/hooks/useExplainJob";
-import RankingMetricSelector from "@/components/RankingMetricSelector";
 
 export default function Home() {
   const [task, setTask] = useState<TaskType | "">("");

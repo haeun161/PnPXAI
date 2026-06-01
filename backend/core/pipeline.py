@@ -175,8 +175,16 @@ def run_explanation_pipeline(
             update_job_predictions(job_id, predictions)
         else:
             input_data = handler.preprocess_input(raw_data)
+            # Time-series returns {"tensor": ..., "col_names": ...}
+            if isinstance(input_data, dict) and "tensor" in input_data:
+                input_tensor = input_data["tensor"]
+                num_channels = input_tensor.shape[1]
+                # Reload model with correct num_input_channels
+                model = handler.load_model(model_name, num_input_channels=num_channels)
+                explainer_model = model
+            else:
+                input_tensor = input_data if isinstance(input_data, torch.Tensor) else None
             target_class = 0
-            input_tensor = input_data if isinstance(input_data, torch.Tensor) else None
 
         # For each explainer: attribution + metrics + visualization
         job_dir = os.path.join(VISUALIZATION_DIR, job_id)

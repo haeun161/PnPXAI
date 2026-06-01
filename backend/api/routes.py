@@ -151,9 +151,9 @@ async def get_job_status(job_id: str):
     return job
 
 
-@router.get("/jobs/{job_id}/visualizations/{explainer_name}.png")
-async def get_visualization(job_id: str, explainer_name: str):
-    viz_path = os.path.join(VISUALIZATION_DIR, job_id, f"{explainer_name}.png")
+@router.get("/jobs/{job_id}/visualizations/{filename}")
+async def get_visualization(job_id: str, filename: str):
+    viz_path = os.path.join(VISUALIZATION_DIR, job_id, filename)
     if not os.path.exists(viz_path):
         raise HTTPException(status_code=404, detail="Visualization not found.")
     return FileResponse(viz_path, media_type="image/png")

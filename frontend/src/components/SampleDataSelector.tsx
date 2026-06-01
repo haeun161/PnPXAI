@@ -118,12 +118,25 @@ export default function SampleDataSelector({ task, onSampleSelect, disabled }: P
                 })()}
               </div>
             )}
-            {/* Label */}
-            <p className={`text-[10px] text-center capitalize truncate ${
-              selected === s.name ? "text-blue-700 font-semibold" : "text-gray-600"
-            }`}>
-              {displayName(s.name)}
-            </p>
+            {/* Label + Download */}
+            <div className="flex items-center justify-between mt-1">
+              <p className={`text-[10px] capitalize truncate flex-1 ${
+                selected === s.name ? "text-blue-700 font-semibold" : "text-gray-600"
+              }`}>
+                {displayName(s.name)}
+              </p>
+              <a
+                href={`/api/samples/${task}/${s.name}`}
+                download={s.name}
+                onClick={(e) => e.stopPropagation()}
+                className="text-gray-300 hover:text-gray-600 flex-shrink-0 ml-1"
+                title="Download"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              </a>
+            </div>
           </button>
         ))}
       </div>
