@@ -113,7 +113,7 @@ def _run_explainer_with_params(task, model_name, explainer_name, input_data, cus
     if inp.is_floating_point():
         inp = inp.requires_grad_(True)
     attr_raw = explainer.attribute(inp, target_tensor)
-    attribution = normalize_attribution(attr_raw)
+    attribution = normalize_attribution(attr_raw, task=task)
 
     metrics = {}
     try:

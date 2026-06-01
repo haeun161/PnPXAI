@@ -5,6 +5,8 @@ import TaskSelector from "@/components/TaskSelector";
 import DataInput from "@/components/DataInput";
 import ModelSelector from "@/components/ModelSelector";
 import ExplainerDetectionModal from "@/components/ExplainerDetectionModal";
+import ExplainerSelector from "@/components/ExplainerSelector";
+import RankingMetricSelector from "@/components/RankingMetricSelector";
 import PredictionInfo from "@/components/PredictionInfo";
 import ResultsPanel from "@/components/ResultsPanel";
 import { useExplainJob } from "@/hooks/useExplainJob";

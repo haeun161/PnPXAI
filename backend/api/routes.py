@@ -332,9 +332,9 @@ async def get_job_status(job_id: str):
     return job
 
 
-@router.get("/jobs/{job_id}/visualizations/{explainer_name}.png")
-async def get_visualization(job_id: str, explainer_name: str):
-    viz_path = os.path.join(VISUALIZATION_DIR, job_id, f"{explainer_name}.png")
+@router.get("/jobs/{job_id}/visualizations/{filename}")
+async def get_visualization(job_id: str, filename: str):
+    viz_path = os.path.join(VISUALIZATION_DIR, job_id, filename)
     if not os.path.exists(viz_path):
         raise HTTPException(status_code=404, detail="Visualization not found.")
     return FileResponse(viz_path, media_type="image/png")
@@ -358,14 +358,40 @@ async def get_original_data(job_id: str, filename: str):
 # ── Optimizer Endpoints ──
 
 @router.get("/samples/{task}")
-async def get_samples(task: str):
-    """List available sample data files for a task."""
+async def get_samples(task: str, model: Optional[str] = Query(None)):
+    """List available sample data files for a task. For timeseries, includes channel count and compatibility."""
     import glob
     sample_dir = os.path.join("sample_data", task)
     if not os.path.exists(sample_dir):
         return []
     files = glob.glob(os.path.join(sample_dir, "*"))
-    return [{"name": os.path.basename(f), "path": f"/{task}/{os.path.basename(f)}"} for f in sorted(files)]
+    result = []
+    for f in sorted(files):
+        name = os.path.basename(f)
+        entry: dict = {"name": name, "path": f"/{task}/{name}"}
+
+        # For timeseries, detect channel count and check model compatibility
+        if task == "timeseries" and name.endswith(".csv"):
+            try:
+                from backend.tasks.timeseries import _parse_ts_csv, _TS_MODELS
+                with open(f, "rb") as fh:
+                    _, cols = _parse_ts_csv(fh.read())
+                entry["channels"] = len(cols)
+                entry["col_names"] = cols
+                if model and model in _TS_MODELS:
+                    default_ch = _TS_MODELS[model].get("default_channels")
+                    if default_ch is not None and default_ch != len(cols):
+                        entry["compatible"] = False
+                        entry["reason"] = f"Model expects {default_ch}-channel, data has {len(cols)}"
+                    else:
+                        entry["compatible"] = True
+                else:
+                    entry["compatible"] = True
+            except Exception:
+                entry["compatible"] = True
+
+        result.append(entry)
+    return result
 
 
 @router.get("/samples/{task}/{filename}")
