@@ -1,5 +1,69 @@
 [
   {
+    "record_id": "549726fc",
+    "task": "image",
+    "model_name": "resnet50",
+    "explainer_name": "LRPUniformEpsilon",
+    "metric_name": "AbPC",
+    "default_params": {
+      "epsilon": 0.25,
+      "stabilizer": 1e-06
+    },
+    "optimized_params": {
+      "epsilon": 0.25,
+      "stabilizer": 1e-06
+    },
+    "default_metrics": {
+      "complexity": 0.8063342844362654
+    },
+    "optimized_metrics": {
+      "complexity": 0.8063342844362654
+    },
+    "available_params": [
+      {
+        "name": "epsilon",
+        "type": "float",
+        "default": 0.25,
+        "description": ""
+      },
+      {
+        "name": "stabilizer",
+        "type": "float",
+        "default": 1e-06,
+        "description": ""
+      }
+    ],
+    "predictions": [
+      {
+        "class_name": "African elephant",
+        "probability": 33.91
+      },
+      {
+        "class_name": "Indian elephant",
+        "probability": 28.61
+      },
+      {
+        "class_name": "tusker",
+        "probability": 3.69
+      },
+      {
+        "class_name": "sandbar",
+        "probability": 0.52
+      },
+      {
+        "class_name": "promontory",
+        "probability": 0.26
+      }
+    ],
+    "visualization_url": "/api/jobs/opt_1779784656684/visualizations/LRPUniformEpsilon.png",
+    "attribution_summary": {
+      "mean": 0.03464433550834656,
+      "max": 1.0,
+      "nonzero_ratio": 0.06776147959183673
+    },
+    "timestamp": 1779784661.367514
+  },
+  {
     "record_id": "422cd6d8",
     "task": "image",
     "model_name": "resnet50",
@@ -262,69 +326,5 @@
       "nonzero_ratio": 0.13301179846938777
     },
     "timestamp": 1779766062.662189
-  },
-  {
-    "record_id": "7b1208e1",
-    "task": "image",
-    "model_name": "resnet50",
-    "explainer_name": "SmoothGrad",
-    "metric_name": "AbPC",
-    "default_params": {
-      "noise_level": 0.1,
-      "n_iter": 20
-    },
-    "optimized_params": {
-      "noise_level": 0.1,
-      "n_iter": 20
-    },
-    "default_metrics": {
-      "complexity": 0.24274706260462214
-    },
-    "optimized_metrics": {
-      "complexity": 0.24274706260462214
-    },
-    "available_params": [
-      {
-        "name": "noise_level",
-        "type": "float",
-        "default": 0.1,
-        "description": ""
-      },
-      {
-        "name": "n_iter",
-        "type": "int",
-        "default": 20,
-        "description": ""
-      }
-    ],
-    "predictions": [
-      {
-        "class_name": "ruddy turnstone",
-        "probability": 34.19
-      },
-      {
-        "class_name": "red-backed sandpiper",
-        "probability": 15.38
-      },
-      {
-        "class_name": "oystercatcher",
-        "probability": 1.29
-      },
-      {
-        "class_name": "dowitcher",
-        "probability": 0.83
-      },
-      {
-        "class_name": "redshank",
-        "probability": 0.71
-      }
-    ],
-    "visualization_url": "/api/jobs/opt_1779765995382/visualizations/SmoothGrad.png",
-    "attribution_summary": {
-      "mean": 0.027694784104824066,
-      "max": 1.0,
-      "nonzero_ratio": 0.04296875
-    },
-    "timestamp": 1779765996.4491596
   }
 ]

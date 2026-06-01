@@ -10,6 +10,7 @@ import PredictionInfo from "@/components/PredictionInfo";
 import ResultsPanel from "@/components/ResultsPanel";
 import ProgressIndicator from "@/components/ProgressIndicator";
 import { useExplainJob } from "@/hooks/useExplainJob";
+import RankingMetricSelector from "@/components/RankingMetricSelector";
 
 export default function Home() {
   const [task, setTask] = useState<TaskType | "">("");
@@ -71,7 +72,6 @@ export default function Home() {
             <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); setExplainers([]); }} disabled={loading} />
             <DataInput task={task} onDataReady={(data) => setInputData(data)} disabled={loading} />
             <ExplainerSelector task={task} model={model} selected={explainers} onSelect={setExplainers} disabled={loading} />
-            <RankingMetricSelector selected={rankingMetric} onSelect={setRankingMetric} task={task} disabled={loading} />
 
             <button
               onClick={handleRun}

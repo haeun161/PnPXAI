@@ -18,49 +18,56 @@ export default function DataInput({ task, onDataReady, disabled }: Props) {
   if (!task) return null;
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
-        <button
-          onClick={() => setMode("sample")}
-          disabled={disabled}
-          className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors ${
-            mode === "sample"
-              ? "bg-white text-blue-700 shadow-sm"
-              : "text-gray-500 hover:text-gray-700"
-          }`}
-        >
-          Sample Data
-        </button>
-        <button
-          onClick={() => setMode("upload")}
-          disabled={disabled}
-          className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors ${
-            mode === "upload"
-              ? "bg-white text-blue-700 shadow-sm"
-              : "text-gray-500 hover:text-gray-700"
-          }`}
-        >
-          Upload
-        </button>
+    <div>
+      <label className="block text-sm font-semibold text-gray-700 mb-2">Upload Data</label>
+      <div className="border border-gray-200 rounded-xl overflow-hidden">
+        {/* Tabs */}
+        <div className="flex bg-gray-50 border-b border-gray-200">
+          <button
+            onClick={() => setMode("sample")}
+            disabled={disabled}
+            className={`flex-1 text-xs py-2 font-medium transition-colors relative ${
+              mode === "sample"
+                ? "bg-white text-blue-700 border-b-2 border-blue-500"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Sample Data
+          </button>
+          <button
+            onClick={() => setMode("upload")}
+            disabled={disabled}
+            className={`flex-1 text-xs py-2 font-medium transition-colors relative ${
+              mode === "upload"
+                ? "bg-white text-blue-700 border-b-2 border-blue-500"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Upload
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="bg-white p-3 max-h-52 overflow-y-auto">
+          {mode === "sample" && (
+            <SampleDataSelector task={task} onSampleSelect={onDataReady} disabled={disabled} />
+          )}
+
+          {mode === "upload" && (
+            <>
+              {task === "image" && (
+                <ImageUploader onImageSelect={(file) => onDataReady(file, file.name)} disabled={disabled} />
+              )}
+              {task === "text" && (
+                <TextInput onTextReady={onDataReady} disabled={disabled} />
+              )}
+              {task === "timeseries" && (
+                <TimeSeriesInput onDataReady={onDataReady} disabled={disabled} />
+              )}
+            </>
+          )}
+        </div>
       </div>
-
-      {mode === "sample" && (
-        <SampleDataSelector task={task} onSampleSelect={onDataReady} disabled={disabled} />
-      )}
-
-      {mode === "upload" && (
-        <>
-          {task === "image" && (
-            <ImageUploader onImageSelect={(file) => onDataReady(file, file.name)} disabled={disabled} />
-          )}
-          {task === "text" && (
-            <TextInput onTextReady={onDataReady} disabled={disabled} />
-          )}
-          {task === "timeseries" && (
-            <TimeSeriesInput onDataReady={onDataReady} disabled={disabled} />
-          )}
-        </>
-      )}
     </div>
   );
 }
