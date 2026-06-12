@@ -62,6 +62,37 @@ export function useExplainJob() {
     [stopPolling],
   );
 
+  const attachToJob = useCallback(
+    async (jobId: string) => {
+      setLoading(true);
+      setError(null);
+      setJob(null);
+      stopPolling();
+      startTimeRef.current = Date.now();
+
+      const poll = async () => {
+        try {
+          const status = await getJobStatus(jobId);
+          setJob(status);
+          if (status.status === "completed" || status.status === "failed") {
+            stopPolling();
+            setLoading(false);
+            if (status.status === "failed") setError(status.error_message || "Job failed.");
+          }
+          if (Date.now() - startTimeRef.current > MAX_POLL_TIME) {
+            stopPolling();
+            setLoading(false);
+            setError("Job timed out after 5 minutes.");
+          }
+        } catch { /* retry silently */ }
+      };
+
+      await poll();
+      timerRef.current = setInterval(poll, POLL_INTERVAL);
+    },
+    [stopPolling],
+  );
+
   const reset = useCallback(() => {
     stopPolling();
     setJob(null);
@@ -69,5 +100,5 @@ export function useExplainJob() {
     setError(null);
   }, [stopPolling]);
 
-  return { job, loading, error, startJob, reset };
+  return { job, loading, error, startJob, attachToJob, reset };
 }

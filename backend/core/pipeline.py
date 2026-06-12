@@ -420,8 +420,8 @@ def run_explanation_pipeline(
                     "visualization_url": f"/api/jobs/{job_id}/visualizations/{exp_name}.png",
                     "mu_fidelity": round(metric_values.get("mufidelity") or 0, 4) if metric_values.get("mufidelity") is not None else None,
                     "abpc": round(metric_values.get("abpc") or 0, 4) if metric_values.get("abpc") is not None else None,
-                    "sensitivity": round(metric_values.get("sensitivity") or 0, 4) if metric_values.get("sensitivity") is not None else None,
-                    "complexity": round(metric_values.get("complexity") or 0, 4) if metric_values.get("complexity") is not None else None,
+                    "sensitivity": round(-(metric_values.get("sensitivity") or 0), 4) if metric_values.get("sensitivity") is not None else None,
+                    "complexity": round(-(metric_values.get("complexity") or 0), 4) if metric_values.get("complexity") is not None else None,
                     "token_attributions": token_attributions,
                 }
                 all_results.append(result_entry)

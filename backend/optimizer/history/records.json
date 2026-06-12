@@ -1,55 +1,33 @@
 [
   {
-    "error": "Unsupported task: timeseries"
-  },
-  {
-    "error": "Unsupported task: timeseries"
-  },
-  {
-    "record_id": "56dbc402",
+    "record_id": "b66b4363",
     "task": "image",
     "model_name": "resnet50",
-    "explainer_name": "KernelShap",
+    "explainer_name": "GuidedGradCam",
     "metric_name": "AbPC",
     "default_params": {
-      "n_samples": 25,
-      "baseline_fn": "zeros",
-      "feature_mask_fn": "felzenszwalb"
+      "interpolate_mode": "nearest"
     },
     "optimized_params": {
-      "n_samples": 25,
-      "baseline_fn": "zeros",
-      "feature_mask_fn": "felzenszwalb"
+      "interpolate_mode": "nearest"
     },
     "default_metrics": {
-      "mu_fidelity": -0.017734121516511846,
-      "abpc": 0.07783796638250351,
-      "sensitivity": 1.8778611421585083,
-      "complexity": 1.0886817891037248
+      "mu_fidelity": 0.3193013022801014,
+      "abpc": -0.022717788815498352,
+      "sensitivity": 0.5865151882171631,
+      "complexity": 0.09672575370020818
     },
     "optimized_metrics": {
-      "mu_fidelity": -0.06994977554557981,
-      "abpc": -0.22835436463356018,
-      "sensitivity": 2.030822277069092,
-      "complexity": 1.9852823162752444
+      "mu_fidelity": 0.21400951153384595,
+      "abpc": -0.022717788815498352,
+      "sensitivity": 0.5711537003517151,
+      "complexity": 0.09672575370020818
     },
     "available_params": [
       {
-        "name": "n_samples",
-        "type": "int",
-        "default": 25,
-        "description": ""
-      },
-      {
-        "name": "baseline_fn",
+        "name": "interpolate_mode",
         "type": "str",
-        "default": "zeros",
-        "description": ""
-      },
-      {
-        "name": "feature_mask_fn",
-        "type": "str",
-        "default": "felzenszwalb",
+        "default": "nearest",
         "description": ""
       }
     ],
@@ -75,52 +53,44 @@
         "probability": 0.71
       }
     ],
-    "visualization_url": "/api/jobs/opt_1780293947293/visualizations/KernelShap.png",
+    "visualization_url": "/api/jobs/opt_1781254297926/visualizations/GuidedGradCam.png",
     "attribution_summary": {
-      "mean": 0.2756567895412445,
+      "mean": 0.0056166453287005424,
       "max": 1.0,
-      "nonzero_ratio": 0.7644889987244898
+      "nonzero_ratio": 0.0157047193877551
     },
-    "timestamp": 1780293947.7749486,
-    "best_trial_value": 0.27023035287857056
+    "timestamp": 1781254298.4045448,
+    "best_trial_value": 0.20693016052246094
   },
   {
-    "record_id": "589132a0",
+    "record_id": "c8c63fa1",
     "task": "image",
     "model_name": "resnet50",
-    "explainer_name": "IntegratedGradients",
+    "explainer_name": "GuidedGradCam",
     "metric_name": "AbPC",
     "default_params": {
-      "n_steps": 20,
-      "baseline_fn": "zeros"
+      "interpolate_mode": "nearest"
     },
     "optimized_params": {
-      "n_steps": 20,
-      "baseline_fn": "zeros"
+      "interpolate_mode": "nearest"
     },
     "default_metrics": {
-      "mu_fidelity": -0.05855015778479044,
-      "abpc": 0.048498742282390594,
-      "sensitivity": 1.141778588294983,
-      "complexity": 0.27395516442298273
+      "mu_fidelity": 0.22219831992533,
+      "abpc": -0.022717788815498352,
+      "sensitivity": 0.6054818034172058,
+      "complexity": 0.09672575370020818
     },
     "optimized_metrics": {
-      "mu_fidelity": -0.3364896217609672,
-      "abpc": 0.00040934831486083567,
-      "sensitivity": 1.1797031164169312,
-      "complexity": 0.17520237303960445
+      "mu_fidelity": 0.3081008044801991,
+      "abpc": -0.022717788815498352,
+      "sensitivity": 0.5907785296440125,
+      "complexity": 0.09672575370020818
     },
     "available_params": [
       {
-        "name": "n_steps",
-        "type": "int",
-        "default": 20,
-        "description": ""
-      },
-      {
-        "name": "baseline_fn",
+        "name": "interpolate_mode",
         "type": "str",
-        "default": "zeros",
+        "default": "nearest",
         "description": ""
       }
     ],
@@ -146,14 +116,20 @@
         "probability": 0.71
       }
     ],
-    "visualization_url": "/api/jobs/opt_1780291946322/visualizations/IntegratedGradients.png",
+    "visualization_url": "/api/jobs/opt_1781251170888/visualizations/GuidedGradCam.png",
     "attribution_summary": {
-      "mean": 0.023865561932325363,
+      "mean": 0.0056166453287005424,
       "max": 1.0,
-      "nonzero_ratio": 0.04017857142857143
+      "nonzero_ratio": 0.0157047193877551
     },
-    "timestamp": 1780291946.948784,
-    "best_trial_value": 0.30548474192619324
+    "timestamp": 1781251171.4530575,
+    "best_trial_value": 0.20693016052246094
+  },
+  {
+    "error": "Unsupported task: timeseries"
+  },
+  {
+    "error": "Unsupported task: timeseries"
   },
   {
     "error": "Unsupported task: timeseries"

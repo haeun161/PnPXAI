@@ -8,7 +8,10 @@ from typing import Optional
 from backend.api.schemas import TaskInfo, ModelInfo, ExplainerInfo, JobStatus
 from backend.tasks import get_task_handler, list_tasks
 from backend.core.image_utils import load_and_validate_image
-from backend.core.job_manager import create_job, get_job, store_uploaded_data, VISUALIZATION_DIR
+from backend.core.job_manager import (
+    create_job, get_job, store_uploaded_data, VISUALIZATION_DIR,
+    update_job_status, update_job_predictions, update_job_result,
+)
 from backend.core.pipeline import run_explanation_pipeline
 from backend.optimizer.optimizer_service import (
     get_explainer_params, run_optimization, run_with_custom_params,
@@ -132,7 +135,8 @@ async def recommend_explainers(task: str = Query(...), model: str = Query(...)):
 
 
 def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
-    """Background: run all compatible explainers, evaluate 4 metrics, rank top 5."""
+    """Background: run all compatible explainers, evaluate 4 metrics, rank, and store
+    results + visualizations in a linked explain job so GO never re-runs."""
     import copy
     import torch
     from pnpxai.core.recommender.recommender import XaiRecommender, CAM_BASED_EXPLAINERS
@@ -145,6 +149,11 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
     from backend.core.pnpxai_adapter import normalize_attribution, extract_metric_value
 
     job = _detect_rank_jobs[job_id]
+
+    # Allocate linked explain job upfront so the frontend can poll it after GO
+    explain_job_id = str(uuid.uuid4())
+    job["linked_job_id"] = explain_job_id
+
     try:
         handler = get_task_handler(task)
         model = handler.load_model(model_name)
@@ -152,11 +161,11 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
 
         # Architecture detection + compatible explainers
         output = XaiRecommender().recommend(modality, model)
-        explainers = output.explainers
+        explainers_list = output.explainers
         if _has_unregistered_attention(model):
-            explainers = [e for e in explainers if e not in CAM_BASED_EXPLAINERS]
+            explainers_list = [e for e in explainers_list if e not in CAM_BASED_EXPLAINERS]
 
-        all_names = [e.__name__ for e in explainers]
+        all_names = [e.__name__ for e in explainers_list]
         available = {e["name"] for e in handler.get_explainers(model_name) if e.get("compatible", True)}
         explainer_names = [n for n in all_names if n in available]
         explainer_info_map = {e["name"]: e for e in handler.get_explainers(model_name)}
@@ -164,28 +173,39 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
         job["total"] = len(explainer_names)
         job["detected_architectures"] = sorted([a.__name__ for a in output.detected_architectures])
 
+        # Create the linked explain job now that we know explainer names
+        create_job(explain_job_id, task, model_name, explainer_names, "average")
+        store_uploaded_data(explain_job_id, input_data, task)
+        update_job_status(explain_job_id, "running")
+        job_dir = os.path.join(VISUALIZATION_DIR, explain_job_id)
+        os.makedirs(job_dir, exist_ok=True)
+
         # Task-specific inference (done once)
         target_tensor = None
         input_tensor = None
         explainer_model = model
         text_input_ids = None
-        wrapper_model = None
+        tokens_for_viz = None
+        viz_input = input_data  # default fallback
 
         if task == "image":
             proc = handler.preprocess_input(input_data, model_name)
             hf_label_map = getattr(handler, "get_hf_label_map", lambda m: {})(model_name)
-            target_class, _, _ = _run_image_inference(model, proc, hf_label_map)
+            target_class, predictions, _ = _run_image_inference(model, proc, hf_label_map)
             input_tensor = proc
             target_tensor = torch.tensor([target_class], dtype=torch.long)
             explainer_model = model
+            update_job_predictions(explain_job_id, predictions)
+            viz_input = input_data
         elif task == "text":
             text = input_data if isinstance(input_data, str) else str(input_data)
-            target_class, _, emb, ids, _, wrap = _run_text_inference(handler, model, text, model_name)
+            target_class, predictions, emb, ids, tokens_for_viz, wrap = _run_text_inference(handler, model, text, model_name)
             input_tensor = emb
             text_input_ids = ids
             target_tensor = torch.tensor([target_class], dtype=torch.long)
             explainer_model = wrap
-            wrapper_model = wrap
+            update_job_predictions(explain_job_id, predictions)
+            viz_input = tokens_for_viz if tokens_for_viz else text
         elif task == "timeseries":
             proc = handler.preprocess_input(input_data)
             if isinstance(proc, dict) and "tensor" in proc:
@@ -198,6 +218,7 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
                     out = model(ts_tensor)
                 target_class = int(out.argmax(dim=1).item())
                 input_tensor = ts_tensor
+                viz_input = proc
             else:
                 input_tensor = proc if isinstance(proc, torch.Tensor) else None
                 target_class = 0
@@ -239,13 +260,16 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
                         if cam_layer:
                             exp_inst = exp_inst.set_target_layer(cam_layer)
 
+                job["current_step"] = "attribution"
                 attr_raw = exp_inst.attribute(active_inp, target_tensor)
+                attribution = normalize_attribution(attr_raw, task=task)
 
                 metrics = {}
                 for key, cls_name in METRIC_KEYS:
                     if task == "text" and cls_name == "MuFidelity":
                         metrics[key] = None
                         continue
+                    job["current_step"] = key
                     try:
                         m = _get_pnpxai_metric(cls_name, active_model, exp_inst)
                         val = extract_metric_value(m.evaluate(active_inp, target_tensor, attr_raw))
@@ -256,6 +280,23 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
                 valid = [v for v in metrics.values() if v is not None]
                 avg = sum(valid) / len(valid) if valid else 0.0
 
+                # Render visualization into linked job dir
+                job["current_step"] = "visualization"
+                viz_path = os.path.join(job_dir, f"{exp_name}.png")
+                try:
+                    handler.render_result(attribution, viz_input, viz_path)
+                except Exception as viz_err:
+                    print(f"[detect-rank] viz failed for {exp_name}: {viz_err}")
+
+                # Build token attributions for text
+                token_attributions = None
+                if task == "text" and tokens_for_viz:
+                    attr_flat = attribution.flatten()
+                    token_attributions = [
+                        {"token": tokens_for_viz[ti], "score": float(attr_flat[ti]) if ti < len(attr_flat) else 0.0}
+                        for ti in range(len(tokens_for_viz))
+                    ]
+
                 info = explainer_info_map.get(exp_name, {})
                 results.append({
                     "name": exp_name,
@@ -264,8 +305,39 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
                     "metrics": metrics,
                     "avg_score": avg,
                 })
+
+                # Store full result in linked explain job
+                update_job_result(explain_job_id, {
+                    "explainer_name": exp_name,
+                    "display_name": info.get("display_name", exp_name),
+                    "status": "completed",
+                    "rank": None,
+                    "visualization_url": f"/api/jobs/{explain_job_id}/visualizations/{exp_name}.png",
+                    "mu_fidelity": round(metrics["mu_fidelity"], 4) if metrics.get("mu_fidelity") is not None else None,
+                    "abpc": round(metrics["abpc"], 4) if metrics.get("abpc") is not None else None,
+                    "sensitivity": round(-metrics["sensitivity"], 4) if metrics.get("sensitivity") is not None else None,
+                    "complexity": round(-metrics["complexity"], 4) if metrics.get("complexity") is not None else None,
+                    "token_attributions": token_attributions,
+                    "not_supported_reason": None,
+                    "error_message": None,
+                    "current_step": None,
+                })
+
             except Exception as e:
                 print(f"[detect-rank] {exp_name} failed: {e}")
+                info = explainer_info_map.get(exp_name, {})
+                update_job_result(explain_job_id, {
+                    "explainer_name": exp_name,
+                    "display_name": info.get("display_name", exp_name),
+                    "status": "failed",
+                    "rank": None,
+                    "visualization_url": None,
+                    "mu_fidelity": None, "abpc": None, "sensitivity": None, "complexity": None,
+                    "token_attributions": None,
+                    "not_supported_reason": None,
+                    "error_message": str(e),
+                    "current_step": None,
+                })
 
         results.sort(key=lambda x: x["avg_score"], reverse=True)
         job["results"] = results
@@ -274,6 +346,7 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
+        update_job_status(explain_job_id, "failed", str(e))
 
 
 @router.post("/detect-rank")
@@ -303,6 +376,7 @@ async def start_detect_rank(
         "current": 0,
         "total": 0,
         "current_explainer": "",
+        "current_step": "",
         "detected_architectures": [],
         "results": [],
         "error": None,

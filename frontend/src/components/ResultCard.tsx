@@ -19,13 +19,17 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
   const isFailed = result.status === "failed";
   const isRunning = result.status === "running" || result.status === "pending";
 
-  const allMetrics = [
-    { key: "mu_fidelity", label: "Accuracy (Fidelity)", value: result.mu_fidelity },
-    { key: "abpc", label: "Accuracy (AbPC)", value: result.abpc },
-    { key: "sensitivity", label: "Sensitivity", value: result.sensitivity },
-    { key: "complexity", label: "Complexity", value: result.complexity },
+  const faithfulness = (task === "text" || task === "timeseries")
+    ? result.abpc
+    : (result.mu_fidelity != null && result.abpc != null)
+      ? (result.mu_fidelity + result.abpc) / 2
+      : result.mu_fidelity ?? result.abpc;
+
+  const metrics = [
+    { key: "faithfulness", label: "Faithfulness", value: faithfulness },
+    { key: "sensitivity",  label: "Robustness",   value: result.sensitivity },
+    { key: "complexity",   label: "Compactness",  value: result.complexity },
   ];
-  const metrics = task === "text" ? allMetrics.filter((m) => m.key !== "mu_fidelity") : allMetrics;
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -182,14 +186,14 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
           )}
         </div>
         {isCompleted && (
-          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-center">
+          <div className="mt-1.5 grid grid-cols-3 gap-x-1 text-center">
             {metrics.map((m) => {
               const isRanked = activeMetrics.includes(m.key);
               return (
-                <div key={m.key} className={isRanked ? "bg-blue-50 rounded px-1" : ""}>
-                  <p className="text-[10px] text-gray-400">{m.label}</p>
-                  <p className="text-xs font-mono font-medium text-gray-700">
-                    {m.value?.toFixed(4) ?? "N/A"}
+                <div key={m.key} className={`py-0.5 ${isRanked ? "bg-blue-50 rounded" : ""}`}>
+                  <p className="text-[10px] text-gray-400 leading-tight">{m.label}</p>
+                  <p className="text-xs font-mono font-semibold text-gray-700 leading-tight">
+                    {m.value?.toFixed(3) ?? "N/A"}
                   </p>
                 </div>
               );

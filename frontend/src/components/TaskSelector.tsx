@@ -16,7 +16,7 @@ const TASKS: { name: TaskType; label: string; icon: string; desc: string; coming
 export default function TaskSelector({ selected, onSelect, disabled }: Props) {
   return (
     <div>
-      <label className="block text-sm font-semibold text-gray-700 mb-2">Select Task</label>
+      <label className="block text-sm font-semibold text-gray-700 mb-1">Select Task</label>
       <div className="grid grid-cols-3 gap-2">
         {TASKS.map((t) => (
           <button

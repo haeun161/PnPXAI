@@ -10,14 +10,14 @@ interface Props {
 
 const ALL_METRICS = [
   { value: "average", label: "Average (All)" },
-  { value: "mu_fidelity", label: "Accuracy (Fidelity)" },
-  { value: "abpc", label: "Accuracy (AbPC)" },
-  { value: "sensitivity", label: "Sensitivity" },
-  { value: "complexity", label: "Complexity" },
+  { value: "mu_fidelity", label: "Faithfulness" },
+  { value: "abpc", label: "Correctness" },
+  { value: "sensitivity", label: "Robustness" },
+  { value: "complexity", label: "Compactness" },
 ];
 
 export default function RankingMetricSelector({ selected, onSelect, task, disabled }: Props) {
-  const metrics = task === "text"
+  const metrics = (task === "text" || task === "timeseries")
     ? ALL_METRICS.filter((m) => m.value !== "mu_fidelity")
     : ALL_METRICS;
 

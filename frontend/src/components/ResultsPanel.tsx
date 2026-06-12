@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ExplainerResult, JobStatus, TaskType } from "@/lib/types";
 import ResultCard from "./ResultCard";
 import ProgressIndicator from "./ProgressIndicator";
@@ -10,88 +10,236 @@ interface Props {
   rankingMetric: string;
   job: JobStatus | null;
   loading: boolean;
+  hiddenExplainers?: string[];
+  metricWeights?: Record<string, number>;
+  onWeightChange?: (metric: string, value: number) => void;
+  onResetWeights?: () => void;
 }
 
-const ALL_RANKING_OPTIONS = [
-  { value: "mu_fidelity", label: "Accuracy (Fidelity)", short: "Fidelity" },
-  { value: "abpc", label: "Accuracy (AbPC)", short: "AbPC" },
-  { value: "sensitivity", label: "Sensitivity", short: "Sensitivity" },
-  { value: "complexity", label: "Complexity", short: "Complexity" },
+function getFaithfulness(r: ExplainerResult, task: TaskType): number | null {
+  if (task === "text" || task === "timeseries") return r.abpc;
+  if (r.mu_fidelity != null && r.abpc != null) return (r.mu_fidelity + r.abpc) / 2;
+  return r.mu_fidelity ?? r.abpc;
+}
+
+type MetricMap = Record<string, number | null>;
+
+function getMetricValues(r: ExplainerResult, task: TaskType): MetricMap {
+  return {
+    faithfulness: getFaithfulness(r, task),
+    sensitivity: r.sensitivity,
+    complexity: r.complexity,
+  };
+}
+
+function computeMinMax(completed: ExplainerResult[], task: TaskType): Record<string, { min: number; max: number }> {
+  const keys = ["faithfulness", "sensitivity", "complexity"];
+  const bounds: Record<string, { min: number; max: number }> = {};
+  for (const key of keys) {
+    const vals = completed
+      .map((r) => getMetricValues(r, task)[key])
+      .filter((v): v is number => v != null);
+    bounds[key] = {
+      min: vals.length > 0 ? Math.min(...vals) : 0,
+      max: vals.length > 0 ? Math.max(...vals) : 1,
+    };
+  }
+  return bounds;
+}
+
+function getRankScore(
+  r: ExplainerResult,
+  weights: Record<string, number>,
+  task: TaskType,
+  bounds: Record<string, { min: number; max: number }>
+): number {
+  const values = getMetricValues(r, task);
+  let sum = 0, total = 0;
+  for (const [key, w] of Object.entries(weights)) {
+    if (w <= 0) continue;
+    const val = values[key] ?? null;
+    if (val == null) continue;
+    const { min, max } = bounds[key] ?? { min: 0, max: 1 };
+    const normalized = max > min ? (val - min) / (max - min) : 1;
+    sum += normalized * w;
+    total += w;
+  }
+  return total > 0 ? sum / total : 0;
+}
+
+function rerank(results: ExplainerResult[], weights: Record<string, number>, task: TaskType): ExplainerResult[] {
+  const completed = results.filter((r) => r.status === "completed").map((r) => ({ ...r }));
+  const bounds = computeMinMax(completed, task);
+  completed.sort((a, b) => getRankScore(b, weights, task, bounds) - getRankScore(a, weights, task, bounds));
+  completed.forEach((r, i) => { r.rank = i + 1; });
+  return [...completed, results.filter((r) => r.status !== "completed")].flat();
+}
+
+const METRIC_LABELS = [
+  { key: "faithfulness", label: "Faithfulness" },
+  { key: "sensitivity",  label: "Robustness" },
+  { key: "complexity",   label: "Compactness" },
 ];
 
-function getRankScore(r: ExplainerResult, metrics: string[]): number {
-  const vals = metrics
-    .map((m) => (r as any)[m] as number | null)
-    .filter((v) => v != null) as number[];
-  return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+const DEFAULT_WEIGHTS: Record<string, number> = {
+  faithfulness: 1, sensitivity: 1, complexity: 1,
+};
+
+interface WeightControlsProps {
+  metricWeights: Record<string, number>;
+  onWeightChange: (metric: string, value: number) => void;
+  onResetWeights: () => void;
 }
 
-function rerank(results: ExplainerResult[], metrics: string[]): ExplainerResult[] {
-  const completed = results
-    .filter((r) => r.status === "completed")
-    .map((r) => ({ ...r }));
+function WeightControls({ metricWeights, onWeightChange, onResetWeights }: WeightControlsProps) {
+  const [gearOpen, setGearOpen] = useState(false);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editingVal, setEditingVal] = useState("");
+  const gearRef = useRef<HTMLDivElement>(null);
 
-  completed.sort((a, b) => getRankScore(b, metrics) - getRankScore(a, metrics));
-  completed.forEach((r, i) => { r.rank = i + 1; });
+  useEffect(() => {
+    if (!gearOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (gearRef.current && !gearRef.current.contains(e.target as Node)) setGearOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [gearOpen]);
 
-  const others = results.filter((r) => r.status !== "completed");
-  return [...completed, ...others];
-}
+  const activeCount = METRIC_LABELS.filter(({ key }) => (metricWeights[key] ?? 0) > 0).length;
+  const total = METRIC_LABELS.reduce((s, { key }) => s + (metricWeights[key] ?? 0), 0);
 
-function MetricButtons({
-  options,
-  active,
-  onToggle,
-  fullWidth = false,
-}: {
-  options: { value: string; label: string }[];
-  active: string[];
-  onToggle: (v: string) => void;
-  fullWidth?: boolean;
-}) {
   return (
-    <div className={fullWidth ? "grid gap-1.5" : "flex gap-1"} style={fullWidth ? { gridTemplateColumns: `repeat(${options.length}, 1fr)` } : {}}>
-      {options.map((opt) => {
-        const isActive = active.includes(opt.value);
-        return (
-          <button
-            key={opt.value}
-            onClick={() => onToggle(opt.value)}
-            className={`text-xs rounded-md border transition-colors ${
-              fullWidth ? "py-1.5 px-2 text-center" : "px-2.5 py-1"
-            } ${
-              isActive
-                ? "border-blue-500 bg-blue-50 text-blue-700 font-medium"
-                : "border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-500"
-            }`}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
+    <div className="flex items-center gap-2">
+      {/* 3 toggle buttons */}
+      <div className="flex gap-1">
+        {METRIC_LABELS.map(({ key, label }) => {
+          const active = (metricWeights[key] ?? 0) > 0;
+          const isLast = active && activeCount === 1;
+          return (
+            <button
+              key={key}
+              onClick={() => { if (!isLast) onWeightChange(key, active ? 0 : 1); }}
+              disabled={isLast}
+              title={isLast ? "At least one metric required" : undefined}
+              className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-all ${
+                active
+                  ? isLast
+                    ? "bg-blue-50 border-blue-200 text-blue-400 cursor-not-allowed"
+                    : "bg-blue-50 border-blue-300 text-blue-600"
+                  : "bg-white border-gray-200 text-gray-400 hover:border-blue-200 hover:text-blue-400"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Gear */}
+      <div ref={gearRef} className="relative">
+        <button
+          onClick={() => setGearOpen((o) => !o)}
+          className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${
+            gearOpen ? "text-blue-500 bg-blue-50" : "text-gray-400 hover:text-blue-500 hover:bg-gray-100"
+          }`}
+          title="Adjust weights"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+
+        {gearOpen && (
+          <div className="absolute right-0 top-8 z-30 w-56 bg-white border border-gray-200 rounded-xl shadow-lg p-3">
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Adjust Weights</span>
+              <button onClick={onResetWeights} className="text-[10px] text-gray-400 hover:text-blue-600 transition-colors">reset</button>
+            </div>
+            <div className="flex flex-col gap-2.5">
+              {METRIC_LABELS.map(({ key, label }) => {
+                const w = metricWeights[key] ?? 0;
+                const pct = total > 0 ? Math.round((w / total) * 100) : 0;
+                return (
+                  <div key={key} className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[11px] flex-1 truncate ${w > 0 ? "text-gray-600" : "text-gray-300"}`}>{label}</span>
+                      <span className={`text-[10px] font-mono tabular-nums w-7 text-right ${w > 0 ? "text-blue-500" : "text-gray-300"}`}>
+                        {w > 0 ? `${pct}%` : "—"}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => onWeightChange(key, Math.max(0, Math.round((w - 0.1) * 10) / 10))}
+                          disabled={w <= 0.1 && activeCount === 1}
+                          className="w-5 h-5 rounded border border-gray-200 text-gray-400 hover:text-gray-700 hover:border-gray-300 flex items-center justify-center text-xs leading-none transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                        >−</button>
+                        {editingKey === key ? (
+                          <input
+                            autoFocus
+                            type="number"
+                            min={0} max={9} step={0.1}
+                            value={editingVal}
+                            onChange={(e) => setEditingVal(e.target.value)}
+                            onBlur={() => {
+                              const parsed = parseFloat(editingVal);
+                              const clamped = Math.round(Math.min(9, Math.max(0, isNaN(parsed) ? w : parsed)) * 10) / 10;
+                              if (!(clamped === 0 && activeCount === 1)) onWeightChange(key, clamped);
+                              setEditingKey(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                              if (e.key === "Escape") setEditingKey(null);
+                            }}
+                            className="w-8 text-center text-xs font-mono border border-blue-300 rounded outline-none bg-white text-gray-800"
+                          />
+                        ) : (
+                          <span
+                            onClick={() => { setEditingKey(key); setEditingVal(String(w)); }}
+                            className={`w-8 text-center text-xs font-mono tabular-nums cursor-text rounded hover:bg-gray-100 px-0.5 ${w > 0 ? "text-gray-700" : "text-gray-300"}`}
+                          >
+                            {w.toFixed(1)}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => onWeightChange(key, Math.min(9, Math.round((w + 0.1) * 10) / 10))}
+                          className="w-5 h-5 rounded border border-gray-200 text-gray-400 hover:text-gray-700 hover:border-gray-300 flex items-center justify-center text-xs leading-none transition-colors"
+                        >+</button>
+                      </div>
+                    </div>
+                    <div className="h-1 rounded-full bg-gray-100 overflow-hidden">
+                      <div className="h-full rounded-full bg-blue-300 transition-all duration-300" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-export default function ResultsPanel({ results, task, rankingMetric: _unused, job, loading }: Props) {
-  const RANKING_OPTIONS = task === "text"
-    ? ALL_RANKING_OPTIONS.filter((o) => o.value !== "mu_fidelity")
-    : ALL_RANKING_OPTIONS;
-
-  const [activeMetrics, setActiveMetrics] = useState<string[]>(
-    RANKING_OPTIONS.map((o) => o.value)
-  );
+export default function ResultsPanel({ results, task, job, loading, hiddenExplainers = [], metricWeights = DEFAULT_WEIGHTS, onWeightChange, onResetWeights }: Props) {
   const [expanded, setExpanded] = useState(false);
 
-  const toggleMetric = (v: string) => {
-    setActiveMetrics((prev) => {
-      if (prev.includes(v)) {
-        // keep at least one selected
-        return prev.length > 1 ? prev.filter((m) => m !== v) : prev;
-      }
-      return [...prev, v];
-    });
+  const handleWeightChange = onWeightChange ?? (() => {});
+  const handleResetWeights = onResetWeights ?? (() => {});
+
+  const activeMetrics = Object.entries(metricWeights)
+    .filter(([, w]) => w > 0)
+    .map(([k]) => k);
+
+  const METRIC_DISPLAY: Record<string, string> = {
+    faithfulness: "Faithfulness", sensitivity: "Robustness", complexity: "Compactness",
   };
+  const rankLabel = activeMetrics.length === 0
+    ? "no metrics"
+    : activeMetrics.length >= 3
+    ? "weighted avg"
+    : activeMetrics.map((m) => METRIC_DISPLAY[m] ?? m).join(", ");
 
   if (results.length === 0) {
     return (
@@ -109,11 +257,9 @@ export default function ResultsPanel({ results, task, rankingMetric: _unused, jo
     );
   }
 
-  const rankedResults = rerank(results, activeMetrics).filter((r) => r.status !== "failed");
-
-  const rankLabel = activeMetrics.length === RANKING_OPTIONS.length
-    ? "all metrics"
-    : RANKING_OPTIONS.filter((o) => activeMetrics.includes(o.value)).map((o) => o.short).join(", ");
+  const rankedResults = rerank(results, metricWeights, task)
+    .filter((r) => r.status !== "failed")
+    .filter((r) => !hiddenExplainers.includes(r.explainer_name));
 
   if (expanded) {
     return (
@@ -123,8 +269,12 @@ export default function ResultsPanel({ results, task, rankingMetric: _unused, jo
             XAI Results
             <span className="font-normal text-gray-400 ml-1 text-sm">(ranked by {rankLabel})</span>
           </h3>
-          <div className="flex items-center gap-3">
-            <MetricButtons options={RANKING_OPTIONS} active={activeMetrics} onToggle={toggleMetric} />
+          <div className="flex items-center gap-4">
+            <WeightControls
+              metricWeights={metricWeights}
+              onWeightChange={handleWeightChange}
+              onResetWeights={handleResetWeights}
+            />
             <button
               onClick={() => setExpanded(false)}
               className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg px-3 py-1.5"
@@ -137,19 +287,10 @@ export default function ResultsPanel({ results, task, rankingMetric: _unused, jo
           </div>
         </div>
         <div className="p-6">
-          <div className="mb-4">
-            <ProgressIndicator job={job} loading={loading} />
-          </div>
+          <div className="mb-4"><ProgressIndicator job={job} loading={loading} /></div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
             {rankedResults.map((r) => (
-              <ResultCard
-                key={r.explainer_name}
-                result={r}
-                task={task}
-                activeMetrics={activeMetrics}
-                modelName={job?.model_name}
-                dataUrl={job?.original_data_url}
-              />
+              <ResultCard key={r.explainer_name} result={r} task={task} activeMetrics={activeMetrics} modelName={job?.model_name} dataUrl={job?.original_data_url} />
             ))}
           </div>
         </div>
@@ -168,7 +309,6 @@ export default function ResultsPanel({ results, task, rankingMetric: _unused, jo
         <button
           onClick={() => setExpanded(true)}
           className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 border border-blue-200 rounded-md px-2 py-0.5"
-          title="View all results in full screen"
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
@@ -176,19 +316,10 @@ export default function ResultsPanel({ results, task, rankingMetric: _unused, jo
           Expand ({rankedResults.length})
         </button>
       </div>
-      <div className="mb-3">
-        <MetricButtons options={RANKING_OPTIONS} active={activeMetrics} onToggle={toggleMetric} fullWidth />
-      </div>
-      <div className="flex gap-4 overflow-x-auto pb-2">
+      <div className="flex gap-3 overflow-x-auto pb-2">
         {rankedResults.map((r) => (
-          <div key={r.explainer_name} className="flex-shrink-0" style={{ width: "calc((100% - 2rem) / 3)" }}>
-            <ResultCard
-              result={r}
-              task={task}
-              activeMetrics={activeMetrics}
-              modelName={job?.model_name}
-              dataUrl={job?.original_data_url}
-            />
+          <div key={r.explainer_name} className="flex-shrink-0" style={{ width: "calc((100% - 2.25rem) / 4)" }}>
+            <ResultCard result={r} task={task} activeMetrics={activeMetrics} modelName={job?.model_name} dataUrl={job?.original_data_url} />
           </div>
         ))}
       </div>

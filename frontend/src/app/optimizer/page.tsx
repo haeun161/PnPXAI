@@ -231,7 +231,7 @@ export default function OptimizerPage() {
     <div className="min-h-screen">
       <NavBar />
 
-      <main className="max-w-7xl mx-auto px-6 py-6">
+      <main className="max-w-[1600px] mx-auto px-6 py-6">
         <div className="flex gap-6">
           {/* Left Panel */}
           <div className="w-72 flex-shrink-0 space-y-4">

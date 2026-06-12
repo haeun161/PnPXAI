@@ -16,9 +16,11 @@ interface DetectJob {
   current: number;
   total: number;
   current_explainer: string;
+  current_step: string;
   detected_architectures: string[];
   results: RankedResult[];
   error: string | null;
+  linked_job_id?: string;
 }
 
 export interface DetectionCache {
@@ -26,6 +28,7 @@ export interface DetectionCache {
   job: DetectJob | null;
   selected: string[];
   error: string | null;
+  linkedJobId?: string;
 }
 
 interface Props {
@@ -34,7 +37,7 @@ interface Props {
   inputData: File | Blob | null;
   cache: DetectionCache;
   onCacheChange: (c: DetectionCache) => void;
-  onSave: (selected: string[]) => void;
+  onGo: (selected: string[]) => void;
   onClose: () => void;
 }
 
@@ -48,12 +51,16 @@ const CATEGORY_MAP: Record<string, string> = {
   IntegratedGradients: "Gradient", SmoothGrad: "Gradient", VarGrad: "Gradient",
 };
 
-const CATEGORY_COLORS: Record<string, string> = {
-  Perturbation: "bg-purple-100 text-purple-700",
-  Relevance: "bg-amber-100 text-amber-700",
-  CAM: "bg-green-100 text-green-700",
-  Gradient: "bg-blue-100 text-blue-700",
-};
+
+const PIPELINE_STEPS = [
+  { label: "Attribution",   keys: ["attribution"] },
+  { label: "Faithfulness",  keys: ["mu_fidelity", "abpc"] },
+  { label: "Robustness",    keys: ["sensitivity"] },
+  { label: "Compactness",   keys: ["complexity"] },
+  { label: "Visualization", keys: ["visualization"] },
+];
+
+const MIN_STEP_MS = 280;
 
 const ARCH_COLORS: Record<string, string> = {
   Linear: "bg-sky-100 text-sky-700 border-sky-200",
@@ -65,12 +72,37 @@ const ARCH_COLORS: Record<string, string> = {
   Pool: "bg-gray-100 text-gray-600 border-gray-200",
 };
 
-export default function ExplainerDetectionModal({ task, model, inputData, cache, onCacheChange, onSave, onClose }: Props) {
+
+export default function ExplainerDetectionModal({ task, model, inputData, cache, onCacheChange, onGo, onClose }: Props) {
   const [state, setStateRaw] = useState<State>(cache.state);
   const [job, setJobRaw] = useState<DetectJob | null>(cache.job);
   const [selected, setSelectedRaw] = useState<string[]>(cache.selected);
   const [error, setErrorRaw] = useState<string | null>(cache.error);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Pipeline step timing queue
+  const [displayedStepIdx, setDisplayedStepIdx] = useState(-1);
+  const displayedIdxRef = useRef(-1);
+  const stepQueueRef = useRef<number[]>([]);
+  const processingStepsRef = useRef(false);
+  const lastExplainerRef = useRef("");
+  const processStepsRef = useRef<() => void>(() => {});
+  processStepsRef.current = () => {
+    if (stepQueueRef.current.length === 0) { processingStepsRef.current = false; return; }
+    processingStepsRef.current = true;
+    const next = stepQueueRef.current.shift()!;
+    if (next === -1) {
+      // Reset sentinel: clear display for new explainer, then continue immediately
+      displayedIdxRef.current = -1;
+      setDisplayedStepIdx(-1);
+      setTimeout(() => processStepsRef.current(), 80);
+    } else {
+      displayedIdxRef.current = next;
+      setDisplayedStepIdx(next);
+      setTimeout(() => processStepsRef.current(), MIN_STEP_MS);
+    }
+  };
+
 
   const setState = (s: State) => { setStateRaw(s); onCacheChange({ ...cache, state: s }); };
   const setJob = (j: DetectJob | null) => { setJobRaw(j); onCacheChange({ ...cache, job: j }); };
@@ -86,6 +118,43 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
   useEffect(() => {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
+
+  // Drive pipeline step display with minimum visibility time per step.
+  // -1 in the queue is a reset sentinel marking the boundary between explainers.
+  // pendingNewExplainerStepRef tracks how far the new explainer has progressed
+  // while its steps are still queued behind the sentinel.
+  const pendingNewStepRef = useRef(-1);
+
+  useEffect(() => {
+    if (!job) return;
+    const explainer = job.current_explainer ?? "";
+    const activeIdx = PIPELINE_STEPS.findIndex((s) => s.keys.includes(job.current_step ?? ""));
+
+    if (explainer !== lastExplainerRef.current && explainer !== "") {
+      // Finish previous explainer's remaining steps, then sentinel, then start new from 0
+      const last = displayedIdxRef.current;
+      for (let i = last + 1; i < PIPELINE_STEPS.length; i++) stepQueueRef.current.push(i);
+      stepQueueRef.current.push(-1); // boundary sentinel
+      lastExplainerRef.current = explainer;
+      pendingNewStepRef.current = -1; // reset new-explainer cursor
+    }
+
+    if (activeIdx < 0) return;
+
+    const hasSentinel = stepQueueRef.current.includes(-1);
+    if (hasSentinel) {
+      // New explainer steps go after the sentinel; track via pendingNewStepRef
+      const from = pendingNewStepRef.current + 1;
+      for (let i = from; i <= activeIdx; i++) stepQueueRef.current.push(i);
+      pendingNewStepRef.current = activeIdx;
+    } else {
+      // Normal within-explainer progression
+      const from = displayedIdxRef.current + 1;
+      for (let i = from; i <= activeIdx; i++) stepQueueRef.current.push(i);
+    }
+
+    if (!processingStepsRef.current) processStepsRef.current();
+  }, [job?.current_step, job?.current_explainer]);
 
   const runDetection = async () => {
     if (!inputData) {
@@ -115,10 +184,10 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
           setJobRaw(data);
           if (data.status === "completed") {
             clearInterval(pollRef.current!);
-            const sel = data.results.slice(0, 5).map((r) => r.name);
+            const sel = data.results.map((r) => r.name);
             setSelectedRaw(sel);
             setStateRaw("completed");
-            onCacheChange({ state: "completed", job: data, selected: sel, error: null });
+            onCacheChange({ state: "completed", job: data, selected: sel, error: null, linkedJobId: data.linked_job_id });
           } else if (data.status === "error") {
             clearInterval(pollRef.current!);
             const msg = data.error || "Detection failed";
@@ -163,7 +232,7 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-[520px] flex flex-col overflow-hidden"
+        className="bg-white rounded-2xl shadow-2xl w-[600px] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -188,11 +257,11 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
         </div>
 
         {/* Body */}
-        <div className="px-6 py-5 flex flex-col overflow-y-auto" style={{ minHeight: 280, maxHeight: "65vh" }}>
+        <div className="px-6 py-5 flex flex-col overflow-y-auto" style={{ minHeight: 320, maxHeight: "70vh" }}>
 
           {/* Idle */}
           {state === "idle" && (
-            <div className="flex flex-col items-center justify-center flex-1 text-center py-6">
+            <div className="flex flex-col items-center justify-center flex-1 text-center py-8">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center mb-4">
                 <svg className="w-8 h-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -200,14 +269,11 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
                 </svg>
               </div>
               <p className="text-sm font-medium text-gray-700 mb-1">Run all compatible XAI methods</p>
-              <p className="text-xs text-gray-400 mb-1 leading-relaxed">
-                Evaluates MuFidelity, AbPC, Sensitivity, Complexity<br />
-                for each method and ranks by average score.
+              <p className="text-xs text-gray-400 mb-5 leading-relaxed">
+                Detects model architecture, then evaluates each compatible<br />
+                explainer across Faithfulness · Robustness · Compactness.
               </p>
-              {!inputData && (
-                <p className="text-xs text-amber-500 mb-4">⚠ Upload input data first</p>
-              )}
-              {inputData && <div className="mb-4" />}
+              {!inputData && <p className="text-xs text-amber-500 mb-4">⚠ Upload input data first</p>}
               <button
                 onClick={runDetection}
                 disabled={!inputData}
@@ -223,61 +289,105 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
 
           {/* Running */}
           {state === "running" && (
-            <div className="flex flex-col gap-4">
-              {/* Architecture badges */}
-              {job?.detected_architectures && job.detected_architectures.length > 0 && (
-                <div className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
-                  <div className="flex items-center gap-2 mb-2">
-                    <svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Detected Architectures</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {job.detected_architectures.map((arch) => (
-                      <span key={arch} className={`text-xs font-medium px-2.5 py-1 rounded-lg border ${ARCH_COLORS[arch] ?? "bg-gray-100 text-gray-600 border-gray-200"}`}>
-                        {arch}
-                      </span>
-                    ))}
-                  </div>
+            <div className="flex flex-col gap-5">
+              {/* Architecture — appears once detected */}
+              {job?.detected_architectures && job.detected_architectures.length > 0 ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mr-1">Architecture</span>
+                  {job.detected_architectures.map((arch) => (
+                    <span key={arch} className={`text-xs font-medium px-2.5 py-0.5 rounded-lg border ${ARCH_COLORS[arch] ?? "bg-gray-100 text-gray-600 border-gray-200"}`}>
+                      {arch}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                  <span className="text-xs text-gray-400">Detecting architecture…</span>
                 </div>
               )}
 
-              {/* Progress */}
-              <div>
-                <div className="flex justify-between text-xs mb-1.5">
-                  <span className="text-gray-500 font-medium">
-                    {job ? `Evaluating ${job.current} / ${job.total}` : "Starting..."}
-                  </span>
-                  <span className="text-blue-600 font-semibold">{pct}%</span>
+              {/* Pipeline steps */}
+              <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50 px-4 py-4">
+                {/* Header */}
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="relative w-5 h-5 flex-shrink-0">
+                    <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-blue-400 animate-spin" style={{ animationDuration: "1s" }} />
+                    <div className="absolute inset-[2px] rounded-full border-2 border-transparent border-t-blue-600 animate-spin" style={{ animationDuration: "0.7s", animationDirection: "reverse" }} />
+                  </div>
+                  <span className="text-xs font-semibold text-blue-700 truncate">{job?.current_explainer ?? "Starting…"}</span>
                 </div>
-                <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-blue-500 transition-all duration-500"
-                    style={{ width: `${pct}%` }}
-                  />
+
+                {/* Steps */}
+                <div className="flex items-center">
+                  {PIPELINE_STEPS.map((step, i) => {
+                    const done = displayedStepIdx > i;
+                    const active = displayedStepIdx === i;
+                    return (
+                      <div key={step.label} className="flex items-center flex-1 min-w-0">
+                        {/* Node */}
+                        <div className={`relative flex-1 min-w-0 flex flex-col items-center gap-1.5 py-3 px-1 rounded-xl transition-all duration-300 ${
+                          active ? "bg-blue-600 shadow-md shadow-blue-200" : done ? "bg-blue-500/20" : ""
+                        }`}>
+                          {active && <div className="absolute inset-0 rounded-xl ring-2 ring-blue-400 ring-offset-1 animate-pulse" />}
+                          {/* Dot */}
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all duration-300 ${
+                            active ? "bg-white/25" : done ? "bg-blue-500" : "bg-gray-200"
+                          }`}>
+                            {done ? (
+                              <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : active ? (
+                              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                            ) : (
+                              <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                            )}
+                          </div>
+                          {/* Label */}
+                          <span className={`text-[9px] font-semibold text-center leading-tight transition-colors ${
+                            active ? "text-white" : done ? "text-blue-600" : "text-gray-400"
+                          }`}>
+                            {step.label}
+                          </span>
+                        </div>
+                        {/* Arrow connector */}
+                        {i < PIPELINE_STEPS.length - 1 && (
+                          <svg className={`w-4 h-4 flex-shrink-0 transition-colors duration-300 ${done ? "text-blue-400" : "text-gray-200"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                {job?.current_explainer && (
-                  <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1.5">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                    Running: <span className="font-medium text-gray-600">{job.current_explainer}</span>
-                  </p>
-                )}
               </div>
 
-              {/* Partial results */}
+              {/* Overall progress bar */}
+              <div>
+                <div className="flex justify-between text-xs mb-1.5">
+                  <span className="text-gray-500">Overall progress</span>
+                  <span className="text-blue-600 font-semibold tabular-nums">{pct}%</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+
+              {/* Completed chips */}
               {job && job.results.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Completed so far</p>
-                  <div className="space-y-1.5">
-                    {[...job.results].sort((a, b) => b.avg_score - a.avg_score).map((r) => (
-                      <div key={r.name} className="flex items-center gap-2 text-xs py-1.5 px-3 bg-gray-50 rounded-lg">
-                        <span className="text-gray-700 font-medium flex-1">{r.display_name}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${CATEGORY_COLORS[CATEGORY_MAP[r.name] ?? ""] ?? "bg-gray-100 text-gray-500"}`}>
-                          {CATEGORY_MAP[r.name] ?? "Other"}
-                        </span>
-                        <span className="font-mono text-gray-500 w-12 text-right">{r.avg_score.toFixed(3)}</span>
-                      </div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                    Completed ({job.results.length})
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {job.results.map((r) => (
+                      <span key={r.name} className="inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-lg bg-green-50 text-green-700 border border-green-200">
+                        <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                        {r.display_name}
+                      </span>
                     ))}
                   </div>
                 </div>
@@ -287,7 +397,7 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
 
           {/* Error */}
           {state === "error" && (
-            <div className="flex flex-col items-center justify-center flex-1 text-center py-6">
+            <div className="flex flex-col items-center justify-center flex-1 text-center py-8">
               <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center mb-4">
                 <svg className="w-6 h-6 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
@@ -301,77 +411,71 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
           {/* Completed */}
           {state === "completed" && job && (
             <div className="flex flex-col gap-4">
-              {/* Architecture */}
-              {job.detected_architectures.length > 0 && (
-                <div className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
-                  <div className="flex items-center gap-2 mb-2">
-                    <svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Detected Architectures</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {job.detected_architectures.map((arch) => (
-                      <span key={arch} className={`text-xs font-medium px-2.5 py-1 rounded-lg border ${ARCH_COLORS[arch] ?? "bg-gray-100 text-gray-600 border-gray-200"}`}>
-                        {arch}
-                      </span>
-                    ))}
-                  </div>
+              {/* Architecture + summary row */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mr-1">Architecture</span>
+                  {job.detected_architectures.map((arch) => (
+                    <span key={arch} className={`text-xs font-medium px-2.5 py-0.5 rounded-lg border ${ARCH_COLORS[arch] ?? "bg-gray-100 text-gray-600 border-gray-200"}`}>
+                      {arch}
+                    </span>
+                  ))}
                 </div>
-              )}
-
-              {/* Top 5 ranked results */}
-              <div>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                    Top {Math.min(5, job.results.length)} · ranked by avg score
-                  </span>
+                <div className="flex items-center gap-2 flex-shrink-0">
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${selected.length > 0 ? "bg-blue-50 text-blue-600" : "bg-gray-100 text-gray-400"}`}>
-                    {selected.length} selected
+                    {selected.length} / {job.results.length} selected
                   </span>
+                  <button
+                    onClick={() => setSelected(selected.length === job.results.length ? [] : job.results.map((r) => r.name))}
+                    className="text-[10px] text-gray-400 hover:text-blue-600 transition-colors"
+                  >
+                    {selected.length === job.results.length ? "Deselect all" : "Select all"}
+                  </button>
                 </div>
-                <div className="space-y-2">
-                  {job.results.slice(0, 5).map((r, idx) => {
-                    const isSelected = selected.includes(r.name);
-                    const category = CATEGORY_MAP[r.name] ?? "Other";
-                    const colorClass = CATEGORY_COLORS[category] ?? "bg-gray-100 text-gray-600";
-                    return (
-                      <label
-                        key={r.name}
-                        className={`flex items-center gap-3 rounded-xl border px-4 py-2.5 cursor-pointer transition-all ${
-                          isSelected ? "border-blue-300 bg-blue-50/60" : "border-gray-200 bg-white hover:border-gray-300"
-                        }`}
-                      >
-                        <div className="w-5 h-5 rounded-full bg-gray-100 text-gray-500 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
-                          {idx + 1}
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggle(r.name)}
-                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
-                        />
-                        <span className={`text-sm font-medium flex-1 ${isSelected ? "text-blue-800" : "text-gray-700"}`}>
-                          {r.display_name}
-                        </span>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${colorClass}`}>{category}</span>
-                          <span className="text-xs font-mono text-gray-500 w-12 text-right">{r.avg_score.toFixed(3)}</span>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-                <button
-                  onClick={handleRedetect}
-                  className="mt-3 text-xs text-gray-400 hover:text-gray-500 flex items-center gap-1 transition-colors"
-                >
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  Re-detect
-                </button>
               </div>
+
+              {/* Explainer grid — 2 columns, no scores */}
+              <div className="grid grid-cols-2 gap-2">
+                {job.results.map((r) => {
+                  const isSelected = selected.includes(r.name);
+                  const category = CATEGORY_MAP[r.name] ?? "Other";
+                  const dotColor = {
+                    Perturbation: "bg-purple-400",
+                    Relevance: "bg-amber-400",
+                    CAM: "bg-green-400",
+                    Gradient: "bg-blue-400",
+                  }[category] ?? "bg-gray-300";
+                  return (
+                    <label
+                      key={r.name}
+                      className={`flex items-center gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer transition-all ${
+                        isSelected ? "border-blue-300 bg-blue-50/70" : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggle(r.name)}
+                        className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
+                      />
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+                      <span className={`text-sm font-medium truncate ${isSelected ? "text-blue-800" : "text-gray-700"}`}>
+                        {r.display_name}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <button
+                onClick={handleRedetect}
+                className="self-start text-xs text-gray-400 hover:text-gray-500 flex items-center gap-1 transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Re-detect
+              </button>
             </div>
           )}
         </div>
@@ -390,14 +494,15 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
             </button>
             {state === "completed" && (
               <button
-                onClick={() => { onSave(selected); onClose(); }}
+                onClick={() => onGo(selected)}
                 disabled={selected.length === 0}
                 className="text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Save Selection
+                GO
               </button>
             )}
           </div>

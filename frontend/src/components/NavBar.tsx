@@ -12,7 +12,7 @@ export default function NavBar() {
 
   return (
     <header className="bg-white border-b border-gray-200 px-6 py-0">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
+      <div className="max-w-[1600px] mx-auto px-6 flex items-center justify-between">
         {/* Brand */}
         <div className="py-4 flex-shrink-0">
           <h1 className="text-xl font-bold text-gray-900">

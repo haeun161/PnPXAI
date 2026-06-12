@@ -20,7 +20,7 @@ export default function DataInput({ task, model, onDataReady, disabled }: Props)
 
   return (
     <div>
-      <label className="block text-sm font-semibold text-gray-700 mb-2">Upload Data</label>
+      <label className="block text-sm font-semibold text-gray-700 mb-1">Upload Data</label>
       <div className="border border-gray-200 rounded-xl overflow-hidden">
         {/* Tabs */}
         <div className="flex bg-gray-50 border-b border-gray-200">
@@ -49,7 +49,7 @@ export default function DataInput({ task, model, onDataReady, disabled }: Props)
         </div>
 
         {/* Content */}
-        <div className="bg-white p-3 max-h-52 overflow-y-auto">
+        <div className="bg-white p-3 max-h-36 overflow-y-auto">
           {mode === "sample" && (
             <SampleDataSelector task={task} model={model} onSampleSelect={onDataReady} disabled={disabled} />
           )}

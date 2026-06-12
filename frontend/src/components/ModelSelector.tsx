@@ -83,11 +83,10 @@ export default function ModelSelector({ task, selected, onSelect, disabled }: Pr
     );
   }
 
-  const selectedModelInfo = models.find((m) => m.name === selected);
 
   return (
     <div>
-      <label className="block text-sm font-semibold text-gray-700 mb-2">Select Model</label>
+      <label className="block text-sm font-semibold text-gray-700 mb-1">Select Model</label>
       <div className="border border-gray-200 rounded-xl overflow-hidden">
         {/* Tabs */}
         <div className="flex bg-gray-50 border-b border-gray-200">
@@ -132,9 +131,6 @@ export default function ModelSelector({ task, selected, onSelect, disabled }: Pr
                   </option>
                 ))}
               </select>
-              {selectedModelInfo && (
-                <p className="text-xs text-gray-500 mt-1.5">{selectedModelInfo.description}</p>
-              )}
             </>
           ) : (
             <div className="space-y-2">
