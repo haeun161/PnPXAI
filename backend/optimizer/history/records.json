@@ -1,6 +1,58 @@
 [
   {
-    "record_id": "b66b4363",
+    "record_id": "39ee33db",
+    "task": "image",
+    "model_name": "resnet50",
+    "explainer_name": "RAP",
+    "metric_name": "AbPC",
+    "default_params": {},
+    "optimized_params": {},
+    "default_metrics": {
+      "mu_fidelity": -0.11956264722876572,
+      "abpc": 0.20736698806285858,
+      "sensitivity": 0.3123261034488678,
+      "complexity": 1.18794166706353
+    },
+    "optimized_metrics": {
+      "mu_fidelity": -0.29398462153873506,
+      "abpc": 0.20736698806285858,
+      "sensitivity": 0.3191740810871124,
+      "complexity": 1.18794166706353
+    },
+    "available_params": [],
+    "predictions": [
+      {
+        "class_name": "ruddy turnstone",
+        "probability": 34.19
+      },
+      {
+        "class_name": "red-backed sandpiper",
+        "probability": 15.38
+      },
+      {
+        "class_name": "oystercatcher",
+        "probability": 1.29
+      },
+      {
+        "class_name": "dowitcher",
+        "probability": 0.83
+      },
+      {
+        "class_name": "redshank",
+        "probability": 0.71
+      }
+    ],
+    "visualization_url": "/api/jobs/opt_1781508277422/visualizations/RAP.png",
+    "attribution_summary": {
+      "mean": 0.07486134767532349,
+      "max": 1.0,
+      "nonzero_ratio": 0.26403061224489793
+    },
+    "timestamp": 1781508277.9173954,
+    "best_trial_value": 0.24921195209026337
+  },
+  {
+    "record_id": "c6344bba",
     "task": "image",
     "model_name": "resnet50",
     "explainer_name": "GuidedGradCam",
@@ -12,15 +64,15 @@
       "interpolate_mode": "nearest"
     },
     "default_metrics": {
-      "mu_fidelity": 0.3193013022801014,
+      "mu_fidelity": 0.3442090759589315,
       "abpc": -0.022717788815498352,
-      "sensitivity": 0.5865151882171631,
+      "sensitivity": 0.5914400219917297,
       "complexity": 0.09672575370020818
     },
     "optimized_metrics": {
-      "mu_fidelity": 0.21400951153384595,
+      "mu_fidelity": 0.2764300635583804,
       "abpc": -0.022717788815498352,
-      "sensitivity": 0.5711537003517151,
+      "sensitivity": 0.6059222221374512,
       "complexity": 0.09672575370020818
     },
     "available_params": [
@@ -53,17 +105,17 @@
         "probability": 0.71
       }
     ],
-    "visualization_url": "/api/jobs/opt_1781254297926/visualizations/GuidedGradCam.png",
+    "visualization_url": "/api/jobs/opt_1781508145229/visualizations/GuidedGradCam.png",
     "attribution_summary": {
       "mean": 0.0056166453287005424,
       "max": 1.0,
       "nonzero_ratio": 0.0157047193877551
     },
-    "timestamp": 1781254298.4045448,
+    "timestamp": 1781508145.68481,
     "best_trial_value": 0.20693016052246094
   },
   {
-    "record_id": "c8c63fa1",
+    "record_id": "e477d9c7",
     "task": "image",
     "model_name": "resnet50",
     "explainer_name": "GuidedGradCam",
@@ -75,15 +127,15 @@
       "interpolate_mode": "nearest"
     },
     "default_metrics": {
-      "mu_fidelity": 0.22219831992533,
+      "mu_fidelity": 0.26917996355393575,
       "abpc": -0.022717788815498352,
-      "sensitivity": 0.6054818034172058,
+      "sensitivity": 0.6136488914489746,
       "complexity": 0.09672575370020818
     },
     "optimized_metrics": {
-      "mu_fidelity": 0.3081008044801991,
+      "mu_fidelity": 0.2764300635583804,
       "abpc": -0.022717788815498352,
-      "sensitivity": 0.5907785296440125,
+      "sensitivity": 0.6059222221374512,
       "complexity": 0.09672575370020818
     },
     "available_params": [
@@ -116,22 +168,139 @@
         "probability": 0.71
       }
     ],
-    "visualization_url": "/api/jobs/opt_1781251170888/visualizations/GuidedGradCam.png",
+    "visualization_url": "/api/jobs/opt_1781503330977/visualizations/GuidedGradCam.png",
     "attribution_summary": {
       "mean": 0.0056166453287005424,
       "max": 1.0,
       "nonzero_ratio": 0.0157047193877551
     },
-    "timestamp": 1781251171.4530575,
+    "timestamp": 1781503331.426981,
     "best_trial_value": 0.20693016052246094
   },
   {
-    "error": "Unsupported task: timeseries"
+    "record_id": "59a34d72",
+    "task": "image",
+    "model_name": "resnet50",
+    "explainer_name": "GuidedGradCam",
+    "metric_name": "AbPC",
+    "default_params": {
+      "interpolate_mode": "nearest"
+    },
+    "optimized_params": {
+      "interpolate_mode": "nearest"
+    },
+    "default_metrics": {
+      "mu_fidelity": 0.1670207564780657,
+      "abpc": -0.022717788815498352,
+      "sensitivity": 0.6060068011283875,
+      "complexity": 0.09672575370020818
+    },
+    "optimized_metrics": {
+      "mu_fidelity": 0.2764300635583804,
+      "abpc": -0.022717788815498352,
+      "sensitivity": 0.6059222221374512,
+      "complexity": 0.09672575370020818
+    },
+    "available_params": [
+      {
+        "name": "interpolate_mode",
+        "type": "str",
+        "default": "nearest",
+        "description": ""
+      }
+    ],
+    "predictions": [
+      {
+        "class_name": "ruddy turnstone",
+        "probability": 34.19
+      },
+      {
+        "class_name": "red-backed sandpiper",
+        "probability": 15.38
+      },
+      {
+        "class_name": "oystercatcher",
+        "probability": 1.29
+      },
+      {
+        "class_name": "dowitcher",
+        "probability": 0.83
+      },
+      {
+        "class_name": "redshank",
+        "probability": 0.71
+      }
+    ],
+    "visualization_url": "/api/jobs/opt_1781502964619/visualizations/GuidedGradCam.png",
+    "attribution_summary": {
+      "mean": 0.0056166453287005424,
+      "max": 1.0,
+      "nonzero_ratio": 0.0157047193877551
+    },
+    "timestamp": 1781502965.0717115,
+    "best_trial_value": 0.20693016052246094
   },
   {
-    "error": "Unsupported task: timeseries"
-  },
-  {
-    "error": "Unsupported task: timeseries"
+    "record_id": "e45e6565",
+    "task": "image",
+    "model_name": "resnet50",
+    "explainer_name": "GuidedGradCam",
+    "metric_name": "AbPC",
+    "default_params": {
+      "interpolate_mode": "nearest"
+    },
+    "optimized_params": {
+      "interpolate_mode": "nearest"
+    },
+    "default_metrics": {
+      "mu_fidelity": 0.2764300635583804,
+      "abpc": -0.022717788815498352,
+      "sensitivity": 0.6059222221374512,
+      "complexity": 0.09672575370020818
+    },
+    "optimized_metrics": {
+      "mu_fidelity": 0.2764300635583804,
+      "abpc": -0.022717788815498352,
+      "sensitivity": 0.6059222221374512,
+      "complexity": 0.09672575370020818
+    },
+    "available_params": [
+      {
+        "name": "interpolate_mode",
+        "type": "str",
+        "default": "nearest",
+        "description": ""
+      }
+    ],
+    "predictions": [
+      {
+        "class_name": "ruddy turnstone",
+        "probability": 34.19
+      },
+      {
+        "class_name": "red-backed sandpiper",
+        "probability": 15.38
+      },
+      {
+        "class_name": "oystercatcher",
+        "probability": 1.29
+      },
+      {
+        "class_name": "dowitcher",
+        "probability": 0.83
+      },
+      {
+        "class_name": "redshank",
+        "probability": 0.71
+      }
+    ],
+    "visualization_url": "/api/jobs/opt_1781502767532/visualizations/GuidedGradCam.png",
+    "attribution_summary": {
+      "mean": 0.0056166453287005424,
+      "max": 1.0,
+      "nonzero_ratio": 0.0157047193877551
+    },
+    "timestamp": 1781502767.9896643,
+    "best_trial_value": 0.20693016052246094
   }
 ]

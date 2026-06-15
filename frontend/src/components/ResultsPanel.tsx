@@ -14,6 +14,7 @@ interface Props {
   metricWeights?: Record<string, number>;
   onWeightChange?: (metric: string, value: number) => void;
   onResetWeights?: () => void;
+  className?: string;
 }
 
 function getFaithfulness(r: ExplainerResult, task: TaskType): number | null {
@@ -222,7 +223,7 @@ function WeightControls({ metricWeights, onWeightChange, onResetWeights }: Weigh
   );
 }
 
-export default function ResultsPanel({ results, task, job, loading, hiddenExplainers = [], metricWeights = DEFAULT_WEIGHTS, onWeightChange, onResetWeights }: Props) {
+export default function ResultsPanel({ results, task, job, loading, hiddenExplainers = [], metricWeights = DEFAULT_WEIGHTS, onWeightChange, onResetWeights, className }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   const handleWeightChange = onWeightChange ?? (() => {});
@@ -299,7 +300,7 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
   }
 
   return (
-    <div>
+    <div className={`flex flex-col${className ? ` ${className}` : ""}`}>
       <ProgressIndicator job={job} loading={loading} />
       <div className={`flex items-center justify-between mb-2 ${loading || job ? "mt-3" : ""}`}>
         <h3 className="text-sm font-semibold text-gray-700">
@@ -316,9 +317,9 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
           Expand ({rankedResults.length})
         </button>
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-2">
+      <div className={`flex gap-3 overflow-x-auto pb-2 ${task === "text" ? "h-[490px]" : task === "timeseries" ? "h-[310px]" : "h-100"}`}>
         {rankedResults.map((r) => (
-          <div key={r.explainer_name} className="flex-shrink-0" style={{ width: "calc((100% - 2.25rem) / 4)" }}>
+          <div key={r.explainer_name} className="flex-shrink-0 h-full" style={{ width: "calc((100% - 2.25rem) / 4)" }}>
             <ResultCard result={r} task={task} activeMetrics={activeMetrics} modelName={job?.model_name} dataUrl={job?.original_data_url} />
           </div>
         ))}

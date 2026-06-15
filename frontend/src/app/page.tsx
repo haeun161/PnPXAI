@@ -137,13 +137,13 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="h-screen flex flex-col overflow-hidden">
       <NavBar />
 
-      <main className="max-w-[1600px] mx-auto px-6 py-6">
-        <div className="flex gap-6">
+      <main className="flex-1 overflow-hidden max-w-[1600px] w-full mx-auto px-6 py-6">
+        <div className="flex gap-6 h-full items-stretch">
           {/* Left Panel */}
-          <div className="w-80 flex-shrink-0 flex flex-col gap-2">
+          <div className="w-80 flex-shrink-0 flex flex-col gap-2 overflow-y-auto">
             <TaskSelector selected={task} onSelect={handleTaskChange} disabled={loading} />
             <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); setExplainers([]); resetDetectionCache(); }} disabled={loading} />
             <DataInput task={task} onDataReady={(data) => setInputData(data)} disabled={loading} />
@@ -210,7 +210,7 @@ export default function Home() {
           </div>
 
           {/* Right Panel */}
-          <div className="flex-1 min-w-0 space-y-4">
+          <div className="flex-1 min-w-0 flex flex-col gap-4 overflow-hidden">
             {!job && !loading && <WelcomePanel />}
 
             {job?.predictions && (
@@ -232,6 +232,7 @@ export default function Home() {
                 metricWeights={metricWeights}
                 onWeightChange={handleWeightChange}
                 onResetWeights={handleResetWeights}
+                className="flex-1 min-h-0"
               />
             )}
           </div>

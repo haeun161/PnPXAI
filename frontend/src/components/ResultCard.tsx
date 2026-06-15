@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { ExplainerResult, TaskType } from "@/lib/types";
 
 interface Props {
@@ -13,7 +13,16 @@ interface Props {
 const BAR_HEIGHTS = [45, 85, 35, 100, 60, 75, 40, 90, 55, 70];
 
 export default function ResultCard({ result, task, activeMetrics, modelName, dataUrl }: Props) {
-  const [showExpanded, setShowExpanded] = useState(false);
+  const [showZoom, setShowZoom] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const zoomUrl = (task === "timeseries" && result.visualization_url)
+    ? result.visualization_url.replace(".png", "_expanded.png")
+    : result.visualization_url;
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    setZoom((z) => Math.min(8, Math.max(0.5, z - e.deltaY * 0.001)));
+  }, []);
   const isCompleted = result.status === "completed";
   const isNotSupported = result.status === "not_supported";
   const isFailed = result.status === "failed";
@@ -32,8 +41,32 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
   ];
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-      <div className="relative bg-gray-50 aspect-square">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full">
+      {/* Zoom modal */}
+      {showZoom && zoomUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center"
+          onClick={() => { setShowZoom(false); setZoom(1); }}
+          onWheel={handleWheel}
+        >
+          <button
+            onClick={() => { setShowZoom(false); setZoom(1); }}
+            className="absolute top-4 right-4 text-white bg-black/40 hover:bg-black/60 rounded-full w-8 h-8 flex items-center justify-center transition-colors z-10"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          <img
+            src={zoomUrl}
+            alt={result.display_name}
+            onClick={(e) => e.stopPropagation()}
+            style={{ transform: `scale(${zoom})`, transformOrigin: "center", transition: "transform 0.1s", maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain" }}
+          />
+        </div>
+      )}
+
+      <div className={`relative bg-gray-50 flex-shrink-0 ${task === "text" ? "h-[380px]" : task === "timeseries" ? "h-56" : "flex-1 min-h-0"}`}>
         {result.rank != null && (
           <div className="absolute top-2 left-2 z-10 w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shadow">
             #{result.rank}
@@ -41,11 +74,16 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
         )}
         {isCompleted && result.visualization_url && (
           <>
-            <img src={result.visualization_url} alt={result.display_name} className="w-full h-full object-contain" />
+            <img
+              src={result.visualization_url}
+              alt={result.display_name}
+              className="w-full h-full object-contain cursor-zoom-in"
+              onDoubleClick={() => { setShowZoom(true); setZoom(1); }}
+            />
             <div className="absolute bottom-2 right-2 flex items-center gap-1">
               {task === "timeseries" && (
                 <button
-                  onClick={() => setShowExpanded(true)}
+                  onClick={() => { setShowZoom(true); setZoom(1); }}
                   className="bg-white/90 hover:bg-white rounded-md px-2 py-1 text-[10px] text-gray-600 hover:text-blue-700 shadow-sm flex items-center gap-1 transition-colors"
                   title="Show all variables"
                 >
@@ -67,26 +105,6 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
               </a>
             </div>
           </>
-        )}
-        {/* Expanded modal for all timeseries variables */}
-        {showExpanded && result.visualization_url && (
-          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center" onClick={() => setShowExpanded(false)}>
-            <div className="bg-white rounded-xl shadow-xl max-w-3xl max-h-[85vh] overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-gray-800">{result.display_name} — All Variables</h3>
-                <button onClick={() => setShowExpanded(false)} className="text-gray-400 hover:text-gray-600">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-              <img
-                src={result.visualization_url.replace(".png", "_expanded.png")}
-                alt={`${result.display_name} expanded`}
-                className="w-full object-contain"
-              />
-            </div>
-          </div>
         )}
         {isCompleted && task === "text" && result.token_attributions && (
           <div className="absolute bottom-0 left-0 right-0 bg-white/90 p-2 max-h-[50%] overflow-y-auto">
@@ -169,7 +187,7 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
         )}
       </div>
 
-      <div className="p-3">
+      <div className="p-3 flex-shrink-0">
         <div className="flex items-center justify-between gap-1">
           <h4 className="text-sm font-semibold text-gray-800 truncate">{result.display_name}</h4>
           {isCompleted && modelName && dataUrl && (

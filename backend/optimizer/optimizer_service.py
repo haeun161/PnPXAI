@@ -102,26 +102,44 @@ def _run_explainer_with_params(task, model_name, explainer_name, input_data, cus
     target_tensor = torch.tensor([target_class], dtype=torch.long)
 
     ExplainerClass = _get_pnpxai_explainer(explainer_name)
-    if custom_params:
-        sig = inspect.signature(ExplainerClass.__init__)
-        valid = {k: v for k, v in custom_params.items() if k in sig.parameters}
-        explainer = ExplainerClass(explainer_model, **valid)
-    else:
-        explainer = ExplainerClass(explainer_model)
+    try:
+        if custom_params:
+            sig = inspect.signature(ExplainerClass.__init__)
+            valid = {k: v for k, v in custom_params.items() if k in sig.parameters}
+            explainer = ExplainerClass(explainer_model, **valid)
+        else:
+            explainer = ExplainerClass(explainer_model)
+    except (TypeError, ValueError) as e:
+        available = get_explainer_params(explainer_name)
+        param_hints = ", ".join(f"{p['name']} ({p['type']}, default: {p['default']})" for p in available)
+        raise ValueError(
+            f"Invalid parameter for {explainer_name}: {e}. "
+            f"Please provide valid values. Available parameters: {param_hints or 'none'}."
+        )
+
+    if explainer_name in {"GradCam", "GuidedGradCam"} and task == "image" and hasattr(explainer, "set_target_layer"):
+        from backend.core.pipeline import _find_cam_target_layer
+        cam_target = _find_cam_target_layer(explainer_model)
+        if cam_target is not None:
+            explainer = explainer.set_target_layer(cam_target)
 
     inp = input_tensor.clone()
     if inp.is_floating_point():
         inp = inp.requires_grad_(True)
-    attr_raw = explainer.attribute(inp, target_tensor)
+    torch.manual_seed(42)
+    np.random.seed(42)
+    try:
+        attr_raw = explainer.attribute(inp, target_tensor)
+    except (TypeError, ValueError, NotImplementedError, RuntimeError) as e:
+        available = get_explainer_params(explainer_name)
+        param_hints = ", ".join(f"{p['name']} ({p['type']}, default: {p['default']})" for p in available)
+        raise ValueError(
+            f"Invalid parameter value for {explainer_name}: {e}. "
+            f"Please enter valid values. Available parameters: {param_hints or 'none'}."
+        )
     attribution = normalize_attribution(attr_raw, task=task)
 
-    metrics = {}
-    try:
-        m = _get_pnpxai_metric("Complexity", explainer_model, explainer)
-        result = m.evaluate(inp, target_tensor, attr_raw)
-        metrics["complexity"] = extract_metric_value(result)
-    except Exception:
-        metrics["complexity"] = None
+    metrics = _eval_all_metrics(explainer_model, explainer, inp, target_tensor, attr_raw)
 
     viz_id = f"opt_{int(time.time() * 1000)}"
     viz_dir = os.path.join(VISUALIZATION_DIR, viz_id)
@@ -189,10 +207,10 @@ def _build_output(record_id, task, model_name, explainer_name, metric_name,
 
 def _run_image_optimization(model_name, explainer_name, metric_name, input_data, n_trials):
     import torch
-    from torch.utils.data import DataLoader, TensorDataset
+
     import optuna
-    from pnpxai import AutoExplanationForImageClassification
     from pnpxai.core.experiment.experiment import Objective, load_sampler
+    from pnpxai.core.modality.modality import ImageModality
     from backend.core.pipeline import _run_image_inference, _get_pnpxai_explainer, _get_pnpxai_metric
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -204,27 +222,20 @@ def _run_image_optimization(model_name, explainer_name, metric_name, input_data,
     target_class, predictions, _ = _run_image_inference(model, input_tensor, hf_label_map)
     target_tensor = torch.tensor([target_class])
 
-    # Build AutoExplanation only to get modality + postprocessors (no output cache needed)
-    loader = DataLoader(TensorDataset(input_tensor, target_tensor), batch_size=1)
-    expr = AutoExplanationForImageClassification(
-        model=model,
-        data=loader,
-        input_extractor=lambda batch: batch[0],
-        label_extractor=lambda batch: batch[1],
-        target_extractor=lambda outputs: outputs.argmax(-1),
-        target_labels=False,
-    )
+    # Use ImageModality directly to avoid torch.fx tracing issues with some models
+    image_modality = ImageModality()
+    ExplainerClass = _get_pnpxai_explainer(explainer_name)
+    explainer_inst = ExplainerClass(model=model)
 
-    # Get or create the explainer instance
-    explainer_class_names = [e.__class__.__name__ for e in expr.manager.explainers]
-    if explainer_name in explainer_class_names:
-        explainer_id = explainer_class_names.index(explainer_name)
-        explainer_inst = expr.manager.get_explainer_by_id(explainer_id)
-    else:
-        ExplainerClass = _get_pnpxai_explainer(explainer_name)
-        explainer_inst = ExplainerClass(model=model)
+    # For GradCam/GuidedGradCam: set target layer explicitly to avoid fx tracing
+    if explainer_name in {"GradCam", "GuidedGradCam"} and hasattr(explainer_inst, "set_target_layer"):
+        from backend.core.pipeline import _find_cam_target_layer
+        cam_target = _find_cam_target_layer(model)
+        if cam_target is not None:
+            explainer_inst = explainer_inst.set_target_layer(cam_target)
 
-    postprocessor = expr.manager.get_postprocessor_by_id(0)
+    postprocessors = image_modality.get_default_postprocessors()
+    postprocessor = postprocessors[0]
 
     metric_cls_name = metric_name if metric_name in _METRIC_ORDER else "AbPC"
     metric = _get_pnpxai_metric(metric_cls_name, model, explainer_inst)
@@ -234,36 +245,44 @@ def _run_image_optimization(model_name, explainer_name, metric_name, input_data,
     default_attr = explainer_inst.attribute(inp_def, target_tensor)
     default_metrics = _eval_all_metrics(model, explainer_inst, inp_def, target_tensor, default_attr)
 
-    # Optimize via Objective + optuna directly (avoids output-cache requirement of expr.optimize)
-    inp_opt = input_tensor.clone().requires_grad_(True)
-    objective = Objective(
-        explainer=explainer_inst,
-        postprocessor=postprocessor,
-        metric=metric,
-        modality=expr.modality,
-        inputs=inp_opt,
-        targets=target_tensor,
-    )
-    study = optuna.create_study(sampler=load_sampler("tpe", seed=42), direction="maximize")
-    study.optimize(objective, n_trials=n_trials, n_jobs=1)
+    available_params = get_explainer_params(explainer_name)
+    default_params = {p["name"]: p["default"] for p in available_params}
+
+    # Try Optuna optimization; fall back to default params if model can't be traced
+    opt_explainer = explainer_inst
+    optimized_params = dict(default_params)
+    best_value = None
+    try:
+        inp_opt = input_tensor.clone().requires_grad_(True)
+        objective = Objective(
+            explainer=explainer_inst,
+            postprocessor=postprocessor,
+            metric=metric,
+            modality=image_modality,
+            inputs=inp_opt,
+            targets=target_tensor,
+        )
+        study = optuna.create_study(sampler=load_sampler("tpe", seed=42), direction="maximize")
+        study.optimize(objective, n_trials=n_trials, n_jobs=1)
+        opt_explainer = study.best_trial.user_attrs["explainer"]
+        trial_params = study.best_trial.params
+        opt_params = {
+            k[len("explainer/"):]: v
+            for k, v in trial_params.items()
+            if k.startswith("explainer/") and k[len("explainer/"):] in default_params
+        }
+        optimized_params = {**default_params, **opt_params}
+        best_value = study.best_value
+    except Exception:
+        pass  # use default explainer/params as fallback
 
     # Optimized attribution + metrics
-    opt_explainer = study.best_trial.user_attrs["explainer"]
     inp_result = input_tensor.clone().requires_grad_(True)
+    torch.manual_seed(42)
+    np.random.seed(42)
     opt_attr = opt_explainer.attribute(inp_result, target_tensor)
     optimized_metrics = _eval_all_metrics(model, opt_explainer, inp_result, target_tensor, opt_attr)
     opt_attribution = normalize_attribution(opt_attr)
-
-    # Extract explainer-specific params from best trial
-    available_params = get_explainer_params(explainer_name)
-    default_params = {p["name"]: p["default"] for p in available_params}
-    trial_params = study.best_trial.params
-    opt_params = {
-        k[len("explainer/"):]: v
-        for k, v in trial_params.items()
-        if k.startswith("explainer/") and k[len("explainer/"):] in default_params
-    }
-    optimized_params = {**default_params, **opt_params}
 
     # Render visualization
     viz_id = f"opt_{int(time.time() * 1000)}"
@@ -279,7 +298,7 @@ def _run_image_optimization(model_name, explainer_name, metric_name, input_data,
         available_params, default_params, optimized_params,
         default_metrics, optimized_metrics,
         predictions, f"/api/jobs/{viz_id}/visualizations/{explainer_name}.png",
-        opt_attribution, study.best_value,
+        opt_attribution, best_value,
     )
 
 
@@ -335,6 +354,8 @@ def _run_text_optimization(model_name, explainer_name, metric_name, input_data, 
 
     # Optimized attribution + metrics
     inp_result = input_embeds.clone().detach().requires_grad_(True)
+    torch.manual_seed(42)
+    np.random.seed(42)
     opt_attr = opt_explainer.attribute(inp_result, target_tensor)
     optimized_metrics = _eval_all_metrics(wrapper_model, opt_explainer, inp_result, target_tensor, opt_attr)
     opt_attribution = normalize_attribution(opt_attr)

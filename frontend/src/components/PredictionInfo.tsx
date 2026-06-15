@@ -19,7 +19,7 @@ export default function PredictionInfo({ dataUrl, predictions, task }: Props) {
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-4 py-3">
-      <h3 className="text-sm font-semibold text-gray-700 mb-2">Original Data & Predictions</h3>
+      <h3 className="text-sm font-semibold text-gray-700 mb-2">Input & Prediction</h3>
       <div className="flex gap-4">
         {/* Original data display */}
         {task === "image" && dataUrl && (

@@ -561,9 +561,12 @@ async def run_custom(
         params = {}
 
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None, run_with_custom_params, task, model_name, explainer_name, params, input_data
-    )
+    try:
+        result = await loop.run_in_executor(
+            None, run_with_custom_params, task, model_name, explainer_name, params, input_data
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return result
 
 
@@ -612,7 +615,10 @@ async def run_custom_from_history(
         params = {}
 
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None, run_with_custom_params, task, model_name, explainer_name, params, input_data
-    )
+    try:
+        result = await loop.run_in_executor(
+            None, run_with_custom_params, task, model_name, explainer_name, params, input_data
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return result
