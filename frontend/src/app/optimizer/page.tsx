@@ -545,11 +545,8 @@ export default function OptimizerPage() {
                           <p className="text-[10px] text-gray-400 italic">None</p>
                         )}
                         {(optResult.available_params || []).map((p) => (
-                          <div key={p.name}>
-                            <div className="flex justify-between">
-                              <label className="text-[10px] text-gray-500">{p.name}</label>
-                              <span className="text-[9px] text-gray-400">default: {String(p.default)}</span>
-                            </div>
+                          <div key={p.name} className="flex items-center gap-2">
+                            <label className="text-[10px] text-gray-500 flex-1 truncate" title={p.name}>{p.name}</label>
                             <input
                               type={p.type === "int" || p.type === "float" ? "number" : "text"}
                               step={p.type === "float" ? "0.01" : p.type === "int" ? "1" : undefined}
@@ -558,7 +555,7 @@ export default function OptimizerPage() {
                                 const val = p.type === "int" ? parseInt(e.target.value) : p.type === "float" ? parseFloat(e.target.value) : e.target.value;
                                 setCustomParams((prev) => ({ ...prev, [p.name]: val }));
                               }}
-                              className="w-full rounded border border-gray-300 px-2 py-1 text-xs font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                              className="w-16 flex-shrink-0 rounded border border-gray-300 px-2 py-0.5 text-xs font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
                         ))}

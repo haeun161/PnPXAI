@@ -93,9 +93,14 @@ def _run_explainer_with_params(task, model_name, explainer_name, input_data, cus
         explainer_model = model
         tokens = None
     elif task == "text":
+        from backend.core.pipeline import _TextInputIdsWrapper
         text = input_data if isinstance(input_data, str) else str(input_data)
         target_class, predictions, input_tensor, _input_ids, tokens, wrapper = _run_text_inference(handler, model, text, model_name)
-        explainer_model = wrapper
+        if explainer_name in _GRADIENT_FREE_EXPLAINERS:
+            explainer_model = _TextInputIdsWrapper(model)
+            input_tensor = _input_ids.clone()
+        else:
+            explainer_model = wrapper
     else:
         return None
 
@@ -103,7 +108,16 @@ def _run_explainer_with_params(task, model_name, explainer_name, input_data, cus
 
     ExplainerClass = _get_pnpxai_explainer(explainer_name)
     try:
-        if custom_params:
+        if task == "text" and explainer_name in _GRADIENT_FREE_EXPLAINERS:
+            from pnpxai.explainers.utils.feature_masks import NoMask1d
+            extra = {"feature_mask_fn": NoMask1d()}
+            if custom_params:
+                sig = inspect.signature(ExplainerClass.__init__)
+                # Exclude feature_mask_fn so NoMask1d() is never overridden by a string value
+                valid = {k: v for k, v in custom_params.items() if k in sig.parameters and k != "feature_mask_fn"}
+                extra.update(valid)
+            explainer = ExplainerClass(explainer_model, **extra)
+        elif custom_params:
             sig = inspect.signature(ExplainerClass.__init__)
             valid = {k: v for k, v in custom_params.items() if k in sig.parameters}
             explainer = ExplainerClass(explainer_model, **valid)
@@ -313,7 +327,20 @@ def _run_text_optimization(model_name, explainer_name, metric_name, input_data, 
 
     # Gradient-free methods (Lime, KernelShap) don't benefit from embedding-level optimization
     if explainer_name in _GRADIENT_FREE_EXPLAINERS:
-        return _run_explainer_with_params("text", model_name, explainer_name, input_data)
+        res = _run_explainer_with_params("text", model_name, explainer_name, input_data)
+        if res is None:
+            return {"error": "Failed to run explainer"}
+        available_params = [p for p in get_explainer_params(explainer_name) if p["name"] != "feature_mask_fn"]
+        default_params = {p["name"]: p["default"] for p in available_params}
+        record_id = str(uuid.uuid4())[:8]
+        _save_input_data(record_id, "text", input_data)
+        return _build_output(
+            record_id, "text", model_name, explainer_name, metric_name,
+            available_params, default_params, default_params,
+            res["metrics"], res["metrics"],
+            res["predictions"], res["visualization_url"],
+            np.zeros(1), None,
+        )
 
     handler = get_task_handler("text")
     model = handler.load_model(model_name)
@@ -337,20 +364,37 @@ def _run_text_optimization(model_name, explainer_name, metric_name, input_data, 
     default_attr = default_explainer.attribute(inp_def, target_tensor)
     default_metrics = _eval_all_metrics(wrapper_model, default_explainer, inp_def, target_tensor, default_attr)
 
-    # Optimize via Objective + optuna
-    inp_opt = input_embeds.clone().detach().requires_grad_(True)
-    objective = Objective(
-        explainer=default_explainer,
-        postprocessor=default_postprocessor,
-        metric=metric,
-        modality=text_modality,
-        inputs=inp_opt,
-        targets=target_tensor,
-    )
-    study = optuna.create_study(sampler=load_sampler("tpe", seed=42), direction="maximize")
-    study.optimize(objective, n_trials=n_trials, n_jobs=1)
+    available_params = get_explainer_params(explainer_name)
+    default_params = {p["name"]: p["default"] for p in available_params}
 
-    opt_explainer = study.best_trial.user_attrs["explainer"]
+    # Try Optuna optimization; fall back to default params if metric fails (e.g. pixel_flipping shape mismatch)
+    opt_explainer = default_explainer
+    optimized_params = dict(default_params)
+    best_value = None
+    try:
+        inp_opt = input_embeds.clone().detach().requires_grad_(True)
+        objective = Objective(
+            explainer=default_explainer,
+            postprocessor=default_postprocessor,
+            metric=metric,
+            modality=text_modality,
+            inputs=inp_opt,
+            targets=target_tensor,
+        )
+        study = optuna.create_study(sampler=load_sampler("tpe", seed=42), direction="maximize")
+        study.optimize(objective, n_trials=n_trials, n_jobs=1)
+        if study.best_trial is not None:
+            opt_explainer = study.best_trial.user_attrs["explainer"]
+            trial_params = study.best_trial.params
+            opt_params = {
+                k[len("explainer/"):]: v
+                for k, v in trial_params.items()
+                if k.startswith("explainer/") and k[len("explainer/"):] in default_params
+            }
+            optimized_params = {**default_params, **opt_params}
+            best_value = study.best_value
+    except Exception:
+        pass  # use default explainer/params as fallback
 
     # Optimized attribution + metrics
     inp_result = input_embeds.clone().detach().requires_grad_(True)
@@ -359,17 +403,6 @@ def _run_text_optimization(model_name, explainer_name, metric_name, input_data, 
     opt_attr = opt_explainer.attribute(inp_result, target_tensor)
     optimized_metrics = _eval_all_metrics(wrapper_model, opt_explainer, inp_result, target_tensor, opt_attr)
     opt_attribution = normalize_attribution(opt_attr)
-
-    # Extract params
-    available_params = get_explainer_params(explainer_name)
-    default_params = {p["name"]: p["default"] for p in available_params}
-    trial_params = study.best_trial.params
-    opt_params = {
-        k[len("explainer/"):]: v
-        for k, v in trial_params.items()
-        if k.startswith("explainer/") and k[len("explainer/"):] in default_params
-    }
-    optimized_params = {**default_params, **opt_params}
 
     # Render
     viz_id = f"opt_{int(time.time() * 1000)}"
@@ -385,7 +418,7 @@ def _run_text_optimization(model_name, explainer_name, metric_name, input_data, 
         available_params, default_params, optimized_params,
         default_metrics, optimized_metrics,
         predictions, f"/api/jobs/{viz_id}/visualizations/{explainer_name}.png",
-        opt_attribution, study.best_value,
+        opt_attribution, best_value,
     )
 
 
