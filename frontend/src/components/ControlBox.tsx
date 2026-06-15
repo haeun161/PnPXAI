@@ -60,7 +60,7 @@ export default function ControlBox({
     <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm space-y-3">
       {/* Explainers header */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Control</span>
+        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Explainers</span>
         <div className="flex items-center gap-2">
           <button
             onClick={() => onSetAllHidden(!allHidden)}
@@ -116,7 +116,7 @@ export default function ControlBox({
       <div>
         {/* Header row */}
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Ranking Metric</span>
+          <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Ranking Metric</span>
           <div ref={gearRef} className="relative">
             <button
               onClick={() => setGearOpen((o) => !o)}
