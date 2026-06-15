@@ -13,6 +13,19 @@ import ControlBox from "@/components/ControlBox";
 import { useExplainJob } from "@/hooks/useExplainJob";
 import NavBar from "@/components/NavBar";
 
+function WelcomePanel() {
+  return (
+    <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-8">
+      <img src="/pnpxai_logo.png" alt="PnPXAI Logo" className="w-96 mb-10 select-none" draggable={false} />
+      <h2 className="text-3xl font-bold text-gray-900 mb-4">PnPXAI: Plug-and-Play Explainable AI</h2>
+      <p className="text-base text-gray-500 leading-relaxed max-w-2xl">
+        PnPXAI is a Python package that provides a modular and easy-to-use framework for explainable artificial intelligence (XAI).
+        Select a task, model, and input data on the left to get started.
+      </p>
+    </div>
+  );
+}
+
 const ARCH_COLORS: Record<string, string> = {
   Linear: "bg-sky-100 text-sky-700 border-sky-200",
   Convolution: "bg-violet-100 text-violet-700 border-violet-200",
@@ -198,6 +211,8 @@ export default function Home() {
 
           {/* Right Panel */}
           <div className="flex-1 min-w-0 space-y-4">
+            {!job && !loading && <WelcomePanel />}
+
             {job?.predictions && (
               <PredictionInfo
                 dataUrl={job.original_data_url}
