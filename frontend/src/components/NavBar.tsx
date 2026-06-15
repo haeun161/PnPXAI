@@ -16,9 +16,9 @@ export default function NavBar() {
         {/* Brand */}
         <div className="py-4 flex-shrink-0">
           <h1 className="text-xl font-bold text-gray-900">
-            XAI Demo Platform <span className="text-sm font-normal text-blue-600">v2</span>
+            PnPXAI: Plug-and-Play Explainable AI <span className="text-sm font-normal text-blue-600">v2</span>
           </h1>
-          <p className="text-sm text-gray-500">Multi-modal eXplainable AI powered by PnPXAI</p>
+          <p className="text-sm text-gray-500">Automatic explanations across image, text, and time series</p>
         </div>
 
         {/* Nav tabs */}
