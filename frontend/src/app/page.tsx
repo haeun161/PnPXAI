@@ -15,11 +15,12 @@ import NavBar from "@/components/NavBar";
 
 function WelcomePanel() {
   return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-8">
-      <img src="/pnpxai_logo.png" alt="PnPXAI Logo" className="w-96 mb-10 select-none" draggable={false} />
-      <h2 className="text-3xl font-bold text-gray-900 mb-4">PnPXAI: Plug-and-Play Explainable AI</h2>
-      <p className="text-base text-gray-500 leading-relaxed max-w-2xl">
+    <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-8 -mt-[60px]">
+      <img src="/pnpxai_logo.png" alt="PnPXAI Logo" className="w-[410px] mb-10 select-none" draggable={false} />
+      <h2 className="text-[1.75rem] font-bold text-gray-900 mb-4">PnPXAI: Plug-and-Play Explainable AI</h2>
+      <p className="text-[1.05rem] text-gray-500 leading-relaxed max-w-3xl">
         PnPXAI is a Python package that provides a modular and easy-to-use framework for explainable artificial intelligence (XAI).
+        It allows users to apply various XAI methods to their own models and datasets, and visualize the results in an interactive and intuitive way. 
         Select a task, model, and input data on the left to get started.
       </p>
     </div>
@@ -115,9 +116,9 @@ export default function Home() {
   const resetDetectionCache = () =>
     setDetectionCache({ state: "idle", job: null, selected: [], error: null });
 
-  const handleTaskChange = (t: TaskType) => {
+  const handleTaskChange = (t: TaskType | "") => {
     if (t === task) return;
-    setTask(t);
+    setTask(t as TaskType | "");
     setModel("");
     setExplainers([]);
     setInputData(null);

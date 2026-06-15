@@ -3,7 +3,7 @@ import { TaskType } from "@/lib/types";
 
 interface Props {
   selected: TaskType | "";
-  onSelect: (task: TaskType) => void;
+  onSelect: (task: TaskType | "") => void;
   disabled?: boolean;
 }
 
@@ -21,7 +21,7 @@ export default function TaskSelector({ selected, onSelect, disabled }: Props) {
         {TASKS.map((t) => (
           <button
             key={t.name}
-            onClick={() => !t.comingSoon && onSelect(t.name)}
+            onClick={() => !t.comingSoon && onSelect(selected === t.name ? "" : t.name)}
             disabled={disabled || t.comingSoon}
             className={`flex flex-col items-center gap-1 rounded-lg border p-3 text-xs transition-colors ${
               t.comingSoon
