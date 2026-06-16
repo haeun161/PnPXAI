@@ -1,300 +1,65 @@
 [
   {
-    "record_id": "51af7e2c",
-    "task": "text",
-    "model_name": "distilbert-sst2",
-    "explainer_name": "KernelShap",
+    "record_id": "95dfdfed",
+    "task": "image",
+    "model_name": "resnet50",
+    "explainer_name": "GuidedGradCam",
     "metric_name": "AbPC",
     "default_params": {
-      "n_samples": 25,
-      "baseline_fn": "zeros"
+      "interpolate_mode": "nearest"
     },
     "optimized_params": {
-      "n_samples": 25,
-      "baseline_fn": "zeros"
+      "interpolate_mode": "nearest"
     },
     "default_metrics": {
-      "mu_fidelity": null,
-      "abpc": 0.44089627265930176,
-      "sensitivity": null,
-      "complexity": null
+      "mu_fidelity": 0.2091026267834126,
+      "abpc": -0.022717788815498352,
+      "sensitivity": 0.5645853877067566,
+      "complexity": 0.09672575370020818
     },
     "optimized_metrics": {
-      "mu_fidelity": null,
-      "abpc": 0.44089627265930176,
-      "sensitivity": null,
-      "complexity": null
+      "mu_fidelity": 0.2764300635583804,
+      "abpc": -0.022717788815498352,
+      "sensitivity": 0.6059222221374512,
+      "complexity": 0.09672575370020818
     },
     "available_params": [
       {
-        "name": "n_samples",
-        "type": "int",
-        "default": 25,
-        "description": ""
-      },
-      {
-        "name": "baseline_fn",
+        "name": "interpolate_mode",
         "type": "str",
-        "default": "zeros",
+        "default": "nearest",
         "description": ""
       }
     ],
     "predictions": [
       {
-        "class_name": "POSITIVE",
-        "probability": 99.18
+        "class_name": "ruddy turnstone",
+        "probability": 34.19
       },
       {
-        "class_name": "NEGATIVE",
-        "probability": 0.82
+        "class_name": "red-backed sandpiper",
+        "probability": 15.38
+      },
+      {
+        "class_name": "oystercatcher",
+        "probability": 1.29
+      },
+      {
+        "class_name": "dowitcher",
+        "probability": 0.83
+      },
+      {
+        "class_name": "redshank",
+        "probability": 0.71
       }
     ],
-    "visualization_url": "/api/jobs/opt_1781514580684/visualizations/KernelShap.png",
+    "visualization_url": "/api/jobs/opt_1781581862972/visualizations/GuidedGradCam.png",
     "attribution_summary": {
-      "mean": 0.0,
-      "max": 0.0,
-      "nonzero_ratio": 0.0
-    },
-    "timestamp": 1781514580.9408207
-  },
-  {
-    "record_id": "ba6497b8",
-    "task": "text",
-    "model_name": "distilbert-sst2",
-    "explainer_name": "SmoothGrad",
-    "metric_name": "AbPC",
-    "default_params": {
-      "noise_level": 0.1,
-      "n_iter": 20
-    },
-    "optimized_params": {
-      "noise_level": 0.1,
-      "n_iter": 20
-    },
-    "default_metrics": {
-      "mu_fidelity": null,
-      "abpc": -0.7996814250946045,
-      "sensitivity": 1.0687190294265747,
-      "complexity": 0.9985210822411118
-    },
-    "optimized_metrics": {
-      "mu_fidelity": null,
-      "abpc": -0.7996872663497925,
-      "sensitivity": 1.1190105676651,
-      "complexity": 0.9974104772601514
-    },
-    "available_params": [
-      {
-        "name": "noise_level",
-        "type": "float",
-        "default": 0.1,
-        "description": ""
-      },
-      {
-        "name": "n_iter",
-        "type": "int",
-        "default": 20,
-        "description": ""
-      }
-    ],
-    "predictions": [
-      {
-        "class_name": "POSITIVE",
-        "probability": 99.18
-      },
-      {
-        "class_name": "NEGATIVE",
-        "probability": 0.82
-      }
-    ],
-    "visualization_url": "/api/jobs/opt_1781514572091/visualizations/SmoothGrad.png",
-    "attribution_summary": {
-      "mean": 0.3737134337425232,
+      "mean": 0.0056166453287005424,
       "max": 1.0,
-      "nonzero_ratio": 1.0
+      "nonzero_ratio": 0.0157047193877551
     },
-    "timestamp": 1781514572.3241236
-  },
-  {
-    "record_id": "e1241dd1",
-    "task": "text",
-    "model_name": "distilbert-sst2",
-    "explainer_name": "Lime",
-    "metric_name": "AbPC",
-    "default_params": {
-      "n_samples": 25,
-      "baseline_fn": "zeros"
-    },
-    "optimized_params": {
-      "n_samples": 25,
-      "baseline_fn": "zeros"
-    },
-    "default_metrics": {
-      "mu_fidelity": null,
-      "abpc": 0.4649026393890381,
-      "sensitivity": null,
-      "complexity": null
-    },
-    "optimized_metrics": {
-      "mu_fidelity": null,
-      "abpc": 0.4649026393890381,
-      "sensitivity": null,
-      "complexity": null
-    },
-    "available_params": [
-      {
-        "name": "n_samples",
-        "type": "int",
-        "default": 25,
-        "description": ""
-      },
-      {
-        "name": "baseline_fn",
-        "type": "str",
-        "default": "zeros",
-        "description": ""
-      }
-    ],
-    "predictions": [
-      {
-        "class_name": "POSITIVE",
-        "probability": 99.18
-      },
-      {
-        "class_name": "NEGATIVE",
-        "probability": 0.82
-      }
-    ],
-    "visualization_url": "/api/jobs/opt_1781514562249/visualizations/Lime.png",
-    "attribution_summary": {
-      "mean": 0.0,
-      "max": 0.0,
-      "nonzero_ratio": 0.0
-    },
-    "timestamp": 1781514562.4787118
-  },
-  {
-    "record_id": "f2630bd4",
-    "task": "text",
-    "model_name": "distilbert-sst2",
-    "explainer_name": "IntegratedGradients",
-    "metric_name": "AbPC",
-    "default_params": {
-      "n_steps": 20,
-      "baseline_fn": "zeros"
-    },
-    "optimized_params": {
-      "n_steps": 20,
-      "baseline_fn": "zeros"
-    },
-    "default_metrics": {
-      "mu_fidelity": null,
-      "abpc": 0.7997065782546997,
-      "sensitivity": 1.2518213987350464,
-      "complexity": 0.4420562314155889
-    },
-    "optimized_metrics": {
-      "mu_fidelity": null,
-      "abpc": 0.7997065782546997,
-      "sensitivity": 2.06593656539917,
-      "complexity": 0.4420562314155889
-    },
-    "available_params": [
-      {
-        "name": "n_steps",
-        "type": "int",
-        "default": 20,
-        "description": ""
-      },
-      {
-        "name": "baseline_fn",
-        "type": "str",
-        "default": "zeros",
-        "description": ""
-      }
-    ],
-    "predictions": [
-      {
-        "class_name": "POSITIVE",
-        "probability": 99.18
-      },
-      {
-        "class_name": "NEGATIVE",
-        "probability": 0.82
-      }
-    ],
-    "visualization_url": "/api/jobs/opt_1781514483422/visualizations/IntegratedGradients.png",
-    "attribution_summary": {
-      "mean": 0.18783162534236908,
-      "max": 1.0,
-      "nonzero_ratio": 0.5333333333333333
-    },
-    "timestamp": 1781514483.6983676
-  },
-  {
-    "record_id": "66660cbd",
-    "task": "text",
-    "model_name": "distilbert-sst2",
-    "explainer_name": "Lime",
-    "metric_name": "AbPC",
-    "default_params": {
-      "n_samples": 25,
-      "baseline_fn": "zeros",
-      "feature_mask_fn": "felzenszwalb"
-    },
-    "optimized_params": {
-      "n_samples": 25,
-      "baseline_fn": "zeros",
-      "feature_mask_fn": "felzenszwalb"
-    },
-    "default_metrics": {
-      "mu_fidelity": null,
-      "abpc": 0.4649026393890381,
-      "sensitivity": null,
-      "complexity": null
-    },
-    "optimized_metrics": {
-      "mu_fidelity": null,
-      "abpc": 0.4649026393890381,
-      "sensitivity": null,
-      "complexity": null
-    },
-    "available_params": [
-      {
-        "name": "n_samples",
-        "type": "int",
-        "default": 25,
-        "description": ""
-      },
-      {
-        "name": "baseline_fn",
-        "type": "str",
-        "default": "zeros",
-        "description": ""
-      },
-      {
-        "name": "feature_mask_fn",
-        "type": "str",
-        "default": "felzenszwalb",
-        "description": ""
-      }
-    ],
-    "predictions": [
-      {
-        "class_name": "POSITIVE",
-        "probability": 99.18
-      },
-      {
-        "class_name": "NEGATIVE",
-        "probability": 0.82
-      }
-    ],
-    "visualization_url": "/api/jobs/opt_1781513931660/visualizations/Lime.png",
-    "attribution_summary": {
-      "mean": 0.0,
-      "max": 0.0,
-      "nonzero_ratio": 0.0
-    },
-    "timestamp": 1781513931.9358416
+    "timestamp": 1781581863.4331787,
+    "best_trial_value": 0.20693016052246094
   }
 ]

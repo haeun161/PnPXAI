@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { ExplainerResult, TaskType } from "@/lib/types";
 
 interface Props {
@@ -15,6 +15,9 @@ const BAR_HEIGHTS = [45, 85, 35, 100, 60, 75, 40, 90, 55, 70];
 export default function ResultCard({ result, task, activeMetrics, modelName, dataUrl }: Props) {
   const [showZoom, setShowZoom] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
+
   const zoomUrl = (task === "timeseries" && result.visualization_url)
     ? result.visualization_url.replace(".png", "_expanded.png")
     : result.visualization_url;
@@ -23,6 +26,21 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
     e.preventDefault();
     setZoom((z) => Math.min(8, Math.max(0.5, z - e.deltaY * 0.001)));
   }, []);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y };
+  }, [pan]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!dragRef.current) return;
+    setPan({
+      x: dragRef.current.panX + (e.clientX - dragRef.current.startX),
+      y: dragRef.current.panY + (e.clientY - dragRef.current.startY),
+    });
+  }, []);
+
+  const handleMouseUp = useCallback(() => { dragRef.current = null; }, []);
   const isCompleted = result.status === "completed";
   const isNotSupported = result.status === "not_supported";
   const isFailed = result.status === "failed";
@@ -45,12 +63,16 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
       {/* Zoom modal */}
       {showZoom && zoomUrl && (
         <div
-          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center"
-          onClick={() => { setShowZoom(false); setZoom(1); }}
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center overflow-hidden"
+          onClick={() => { setShowZoom(false); setZoom(1); setPan({ x: 0, y: 0 }); }}
           onWheel={handleWheel}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
         >
           <button
-            onClick={() => { setShowZoom(false); setZoom(1); }}
+            onClick={(e) => { e.stopPropagation(); setShowZoom(false); setZoom(1); setPan({ x: 0, y: 0 }); }}
             className="absolute top-4 right-4 text-white bg-black/40 hover:bg-black/60 rounded-full w-8 h-8 flex items-center justify-center transition-colors z-10"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -60,8 +82,17 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
           <img
             src={zoomUrl}
             alt={result.display_name}
+            onMouseDown={handleMouseDown}
             onClick={(e) => e.stopPropagation()}
-            style={{ transform: `scale(${zoom})`, transformOrigin: "center", transition: "transform 0.1s", maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain" }}
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: "center",
+              transition: dragRef.current ? "none" : "transform 0.1s",
+              maxWidth: "90vw",
+              maxHeight: "90vh",
+              objectFit: "contain",
+              userSelect: "none",
+            }}
           />
         </div>
       )}
