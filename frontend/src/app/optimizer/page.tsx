@@ -167,7 +167,7 @@ export default function OptimizerPage() {
       .finally(() => setLoading(false));
   }, [inputFile]);
 
-  const handleTaskChange = (t: TaskType) => {
+  const handleTaskChange = (t: TaskType | "") => {
     setTask(t);
     setModel("");
     setExplainer("");

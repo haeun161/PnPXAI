@@ -267,7 +267,7 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
       <div className="fixed inset-0 z-50 bg-white overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between z-10">
           <h3 className="text-base font-semibold text-gray-800">
-            XAI Results
+            Attribution Results
             <span className="font-normal text-gray-400 ml-1 text-sm">(ranked by {rankLabel})</span>
           </h3>
           <div className="flex items-center gap-4">
@@ -304,7 +304,7 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
       <ProgressIndicator job={job} loading={loading} />
       <div className={`flex items-center justify-between mb-2 ${loading || job ? "mt-3" : ""}`}>
         <h3 className="text-sm font-semibold text-gray-700">
-          XAI Results
+          Attribution Results
           <span className="font-normal text-gray-400 ml-1">(ranked by {rankLabel})</span>
         </h3>
         <button
@@ -317,9 +317,9 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
           Expand ({rankedResults.length})
         </button>
       </div>
-      <div className={`flex gap-3 overflow-x-auto pb-2 ${task === "text" ? "h-[490px]" : task === "timeseries" ? "h-[310px]" : "h-100"}`}>
+      <div className={`flex gap-3 overflow-x-auto pb-2 ${task === "text" ? "h-[490px]" : task === "timeseries" ? "flex-1 min-h-0" : "h-100"}`}>
         {rankedResults.map((r) => (
-          <div key={r.explainer_name} className="flex-shrink-0 h-full" style={{ width: "calc((100% - 2.25rem) / 4)" }}>
+          <div key={r.explainer_name} className="flex-shrink-0 h-full" style={{ width: task === "timeseries" ? "calc((100% - 0.75rem) / 2)" : "calc((100% - 2.25rem) / 4)" }}>
             <ResultCard result={r} task={task} activeMetrics={activeMetrics} modelName={job?.model_name} dataUrl={job?.original_data_url} />
           </div>
         ))}

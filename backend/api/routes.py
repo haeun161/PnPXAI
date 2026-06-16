@@ -427,6 +427,10 @@ async def get_visualization(job_id: str, filename: str):
     viz_path = os.path.join(VISUALIZATION_DIR, job_id, filename)
     if not os.path.exists(viz_path):
         raise HTTPException(status_code=404, detail="Visualization not found.")
+    if filename.endswith(".zip"):
+        return FileResponse(viz_path, media_type="application/zip", filename=filename)
+    if filename.endswith(".xlsx"):
+        return FileResponse(viz_path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=filename)
     return FileResponse(viz_path, media_type="image/png")
 
 

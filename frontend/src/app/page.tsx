@@ -146,13 +146,13 @@ export default function Home() {
           {/* Left Panel */}
           <div className="w-80 flex-shrink-0 flex flex-col gap-2 overflow-y-auto">
             <TaskSelector selected={task} onSelect={handleTaskChange} disabled={loading} />
-            <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); setExplainers([]); resetDetectionCache(); }} disabled={loading} />
-            <DataInput task={task} onDataReady={(data) => setInputData(data)} disabled={loading} />
+            <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); setExplainers([]); resetDetectionCache(); reset(); }} disabled={loading} />
+            <DataInput task={task} onDataReady={(data) => { setInputData(data); resetDetectionCache(); reset(); }} disabled={loading} />
 
             <div className="space-y-2">
               <button
                 onClick={() => setDetectionOpen(true)}
-                disabled={!task || !model || loading}
+                disabled={!task || !model || !inputData || loading}
                 className="w-full py-1.5 text-sm rounded-lg font-semibold text-white bg-blue-500 border-2 border-blue-500 hover:bg-blue-100 hover:border-blue-500 disabled:border-gray-200 disabled:text-gray-400 disabled:bg-white disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

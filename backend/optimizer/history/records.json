@@ -1,5 +1,69 @@
 [
   {
+    "record_id": "f100f8e2",
+    "task": "text",
+    "model_name": "distilbert-sst2",
+    "explainer_name": "KernelShap",
+    "metric_name": "AbPC",
+    "default_params": {
+      "n_samples": 25,
+      "baseline_fn": "zeros"
+    },
+    "optimized_params": {
+      "n_samples": 25,
+      "baseline_fn": "zeros"
+    },
+    "default_metrics": {
+      "mu_fidelity": null,
+      "abpc": 0.4408961832523346,
+      "sensitivity": null,
+      "complexity": null
+    },
+    "optimized_metrics": {
+      "mu_fidelity": null,
+      "abpc": 0.4408961832523346,
+      "sensitivity": null,
+      "complexity": null
+    },
+    "available_params": [
+      {
+        "name": "n_samples",
+        "type": "int",
+        "default": 25,
+        "description": ""
+      },
+      {
+        "name": "baseline_fn",
+        "type": "str",
+        "default": "zeros",
+        "description": ""
+      }
+    ],
+    "predictions": [
+      {
+        "class_name": "POSITIVE",
+        "probability": 99.18
+      },
+      {
+        "class_name": "NEGATIVE",
+        "probability": 0.82
+      }
+    ],
+    "visualization_url": "/api/jobs/opt_1781595659905/visualizations/KernelShap.png",
+    "attribution_summary": {
+      "mean": 0.0,
+      "max": 0.0,
+      "nonzero_ratio": 0.0
+    },
+    "timestamp": 1781595660.4539998
+  },
+  {
+    "error": "Unsupported task: timeseries"
+  },
+  {
+    "error": "Unsupported task: timeseries"
+  },
+  {
     "record_id": "95dfdfed",
     "task": "image",
     "model_name": "resnet50",

@@ -97,7 +97,7 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
         </div>
       )}
 
-      <div className={`relative bg-gray-50 flex-shrink-0 ${task === "text" ? "h-[380px]" : task === "timeseries" ? "h-56" : "flex-1 min-h-0"}`}>
+      <div className={`relative bg-gray-50 flex-shrink-0 ${task === "text" ? "h-[380px]" : task === "timeseries" ? "flex-1 min-h-0" : "flex-1 min-h-0"}`}>
         {result.rank != null && (
           <div className="absolute top-2 left-2 z-10 w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shadow">
             #{result.rank}
@@ -115,25 +115,37 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
               {task === "timeseries" && (
                 <button
                   onClick={() => { setShowZoom(true); setZoom(1); }}
-                  className="bg-white/90 hover:bg-white rounded-md px-2 py-1 text-[10px] text-gray-600 hover:text-blue-700 shadow-sm flex items-center gap-1 transition-colors"
+                  className="bg-white/90 hover:bg-white rounded-md p-1 text-gray-600 hover:text-blue-700 shadow-sm transition-colors"
                   title="Show all variables"
                 >
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
                   </svg>
-                  Expand
                 </button>
               )}
-              <a
-                href={result.visualization_url}
-                download={`${result.explainer_name}_xai_result.png`}
-                className="bg-white/90 hover:bg-white rounded-md px-2 py-1 text-[10px] text-gray-600 hover:text-blue-700 shadow-sm flex items-center gap-1 transition-colors"
-                title="Download"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-              </a>
+              {task === "timeseries" && result.visualization_url ? (
+                <a
+                  href={result.visualization_url.replace(".png", "_bundle.zip")}
+                  download={`${result.explainer_name}_attribution.zip`}
+                  className="bg-white/90 hover:bg-white rounded-md p-1 text-gray-600 hover:text-blue-700 shadow-sm transition-colors"
+                  title="Download (ZIP: all variable graphs + Excel data)"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                </a>
+              ) : (
+                <a
+                  href={result.visualization_url ?? ""}
+                  download={`${result.explainer_name}_xai_result.png`}
+                  className="bg-white/90 hover:bg-white rounded-md p-1 text-gray-600 hover:text-blue-700 shadow-sm transition-colors"
+                  title="Download"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                </a>
+              )}
             </div>
           </>
         )}

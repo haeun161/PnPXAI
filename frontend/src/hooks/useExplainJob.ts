@@ -70,6 +70,21 @@ export function useExplainJob() {
       stopPolling();
       startTimeRef.current = Date.now();
 
+      // First poll — if job doesn't exist (404), stop immediately
+      try {
+        const status = await getJobStatus(jobId);
+        setJob(status);
+        if (status.status === "completed" || status.status === "failed") {
+          setLoading(false);
+          if (status.status === "failed") setError(status.error_message || "Job failed.");
+          return;
+        }
+      } catch {
+        // Job not found (server restarted) — stop silently
+        setLoading(false);
+        return;
+      }
+
       const poll = async () => {
         try {
           const status = await getJobStatus(jobId);
@@ -84,10 +99,13 @@ export function useExplainJob() {
             setLoading(false);
             setError("Job timed out after 5 minutes.");
           }
-        } catch { /* retry silently */ }
+        } catch {
+          // Job disappeared — stop polling
+          stopPolling();
+          setLoading(false);
+        }
       };
 
-      await poll();
       timerRef.current = setInterval(poll, POLL_INTERVAL);
     },
     [stopPolling],
