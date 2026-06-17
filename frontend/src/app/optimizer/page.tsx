@@ -49,8 +49,8 @@ interface HistoryRecord {
   visualization_url: string | null;
 }
 
-function computeDisplayMetrics(metrics: Record<string, number | null>, taskType: string) {
-  const { mu_fidelity, abpc, sensitivity, complexity } = metrics;
+function computeDisplayMetrics(metrics: Record<string, number | null> | undefined | null, taskType: string) {
+  const { mu_fidelity, abpc, sensitivity, complexity } = metrics ?? {};
   let faithfulness: number | null;
   if (taskType === "text" || taskType === "timeseries") {
     faithfulness = abpc ?? null;
@@ -81,6 +81,45 @@ function MetricDisplay({ metrics, taskType }: { metrics: Record<string, number |
   );
 }
 
+function ZoomModal({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center overflow-hidden"
+      onClick={() => { onClose(); }}
+      onWheel={(e) => { e.preventDefault(); setZoom((z) => Math.min(8, Math.max(0.5, z - e.deltaY * 0.001))); }}
+      onMouseMove={(e) => { if (!dragRef.current) return; setPan({ x: dragRef.current.px + (e.clientX - dragRef.current.sx), y: dragRef.current.py + (e.clientY - dragRef.current.sy) }); }}
+      onMouseUp={() => { dragRef.current = null; }}
+      onMouseLeave={() => { dragRef.current = null; }}
+      style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
+    >
+      <button
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
+        className="absolute top-4 right-4 text-white bg-black/40 hover:bg-black/60 rounded-full w-8 h-8 flex items-center justify-center z-10"
+      >
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+      <img
+        src={src}
+        alt={alt}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => { e.preventDefault(); dragRef.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y }; }}
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transformOrigin: "center",
+          transition: dragRef.current ? "none" : "transform 0.1s",
+          maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain", userSelect: "none",
+        }}
+      />
+    </div>
+  );
+}
+
 export default function OptimizerPage() {
   const [task, setTask] = useState<TaskType | "">("");
   const [model, setModel] = useState("");
@@ -89,6 +128,7 @@ export default function OptimizerPage() {
   const [inputFile, setInputFile] = useState<File | Blob | null>(null);
   const [inputPreview, setInputPreview] = useState<string | null>(null);
   const [sourceDataUrl, setSourceDataUrl] = useState<string | null>(null);
+  const [zoomSrc, setZoomSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [customLoading, setCustomLoading] = useState(false);
   const [restoredRecordId, setRestoredRecordId] = useState<string | null>(null);
@@ -290,6 +330,7 @@ export default function OptimizerPage() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
+      {zoomSrc && <ZoomModal src={zoomSrc} alt="XAI Result" onClose={() => setZoomSrc(null)} />}
       <NavBar />
 
       <main className="flex-1 overflow-hidden max-w-[1600px] w-full mx-auto px-6 py-6">
@@ -471,7 +512,7 @@ export default function OptimizerPage() {
                     </h3>
                     {optResult.visualization_url && (
                       <div className="bg-gray-50 rounded-lg overflow-hidden relative group">
-                        <img src={optResult.visualization_url} alt="Optimized XAI" className="w-full max-h-96 object-contain" />
+                        <img src={optResult.visualization_url} alt="Optimized XAI" className="w-full max-h-96 object-contain cursor-zoom-in" onClick={() => setZoomSrc(optResult.visualization_url)} />
                         <a
                           href={optResult.visualization_url}
                           download={buildDownloadName(optResult.optimized_params, optResult.explainer_name)}
@@ -486,10 +527,10 @@ export default function OptimizerPage() {
                       <div className="p-2">
                         <p className="text-[10px] font-semibold text-gray-500 mb-1">PARAMETERS</p>
                         <div className="space-y-0.5">
-                          {Object.entries(optResult.optimized_params).length === 0 && (
+                          {Object.entries(optResult.optimized_params ?? {}).length === 0 && (
                             <p className="text-[10px] text-gray-400 italic">None</p>
                           )}
-                          {Object.entries(optResult.optimized_params).map(([k, v]) => (
+                          {Object.entries(optResult.optimized_params ?? {}).map(([k, v]) => (
                             <div key={k} className="flex justify-between text-xs gap-2">
                               <span className="text-gray-500 truncate">{k}</span>
                               <span className="font-mono text-gray-700 flex-shrink-0">{String(v)}</span>
@@ -514,7 +555,7 @@ export default function OptimizerPage() {
                     </h3>
                     {customResult?.visualization_url ? (
                       <div className="bg-gray-50 rounded-lg overflow-hidden relative group">
-                        <img src={customResult.visualization_url} alt="Custom XAI" className="w-full max-h-96 object-contain" />
+                        <img src={customResult.visualization_url} alt="Custom XAI" className="w-full max-h-96 object-contain cursor-zoom-in" onClick={() => setZoomSrc(customResult.visualization_url)} />
                         <a
                           href={customResult.visualization_url}
                           download={buildDownloadName(customParams, optResult.explainer_name)}

@@ -172,7 +172,7 @@ def _create_bundle_zip(signals, attr, col_names, sorted_idx, channel_importance,
         for rank_i, ch in enumerate(sorted_idx):
             rank = rank_i + 1
             safe_name = col_names[ch].replace("/", "_").replace("\\", "_").replace(" ", "_")
-            fname = f"#{rank}_{safe_name}.png"
+            fname = f"#Rank{rank}_{safe_name}.png"
 
             fig, ax = plt.subplots(figsize=(8, 4.5), dpi=100)
             _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=rank)
@@ -182,32 +182,27 @@ def _create_bundle_zip(signals, attr, col_names, sorted_idx, channel_importance,
             fig.savefig(os.path.join(img_dir, fname), bbox_inches="tight", pad_inches=0.15)
             plt.close(fig)
 
-        # Excel: Variable Ranking + Attribution Values + Signal Values
-        excel_path = os.path.join(tmp_dir, "attribution_data.xlsx")
-
+        # Excel 1: Variable Ranking (mean attribution per variable)
+        seq_len = signals.shape[-1]
+        ranking_path = os.path.join(tmp_dir, "variable_ranking.xlsx")
         ranking_data = [
             {"Rank": i + 1, "Variable": col_names[ch], "Mean Attribution": float(channel_importance[ch])}
             for i, ch in enumerate(sorted_idx)
         ]
-        df_ranking = pd.DataFrame(ranking_data)
+        pd.DataFrame(ranking_data).to_excel(ranking_path, index=False, engine="openpyxl")
 
-        attr_dict = {"timestep": list(range(signals.shape[-1]))}
-        for i, ch in enumerate(sorted_idx):
-            attr_dict[f"#{i+1} {col_names[ch]}"] = attr[ch].tolist()
-        df_attr = pd.DataFrame(attr_dict)
-
-        sig_dict = {"timestep": list(range(signals.shape[-1]))}
-        for i, ch in enumerate(sorted_idx):
-            sig_dict[f"#{i+1} {col_names[ch]}"] = signals[ch].tolist()
-        df_sig = pd.DataFrame(sig_dict)
-
-        with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-            df_ranking.to_excel(writer, sheet_name="Variable Ranking", index=False)
-            df_attr.to_excel(writer, sheet_name="Attribution Values", index=False)
-            df_sig.to_excel(writer, sheet_name="Signal Values", index=False)
+        # Excel 2: Original data + per-timestep per-variable attribution side by side
+        data_attr_path = os.path.join(tmp_dir, "data_attribution.xlsx")
+        data_attr = {"timestep": list(range(seq_len))}
+        for ch in range(signals.shape[0]):
+            name = col_names[ch]
+            data_attr[name] = signals[ch].tolist()
+            data_attr[f"{name}_attribution"] = attr[ch].tolist()
+        pd.DataFrame(data_attr).to_excel(data_attr_path, index=False, engine="openpyxl")
 
         # Create ZIP
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(excel_path, "attribution_data.xlsx")
+            zf.write(ranking_path, "variable_ranking.xlsx")
+            zf.write(data_attr_path, "data_attribution.xlsx")
             for fname in sorted(os.listdir(img_dir)):
                 zf.write(os.path.join(img_dir, fname), f"images/{fname}")

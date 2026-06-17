@@ -101,6 +101,26 @@ def _run_explainer_with_params(task, model_name, explainer_name, input_data, cus
             input_tensor = _input_ids.clone()
         else:
             explainer_model = wrapper
+    elif task == "timeseries":
+        proc = handler.preprocess_input(input_data)
+        tokens = None
+        if isinstance(proc, dict) and "tensor" in proc:
+            ts_tensor = proc["tensor"]
+            num_ch = ts_tensor.shape[1]
+            model = handler.load_model(model_name, num_input_channels=num_ch)
+            model.eval()
+            with torch.no_grad():
+                out = model(ts_tensor)
+            target_class = int(out.argmax(dim=1).item())
+            input_tensor = ts_tensor
+            explainer_model = model
+            # Override viz_input for render_result
+            tokens = proc  # pass dict with tensor + col_names
+        else:
+            input_tensor = proc if isinstance(proc, torch.Tensor) else None
+            target_class = 0
+            explainer_model = model
+        predictions = [{"class_name": f"class_{target_class}", "probability": 100.0}]
     else:
         return None
 
@@ -422,11 +442,77 @@ def _run_text_optimization(model_name, explainer_name, metric_name, input_data, 
     )
 
 
+def _run_timeseries_optimization(model_name, explainer_name, metric_name, input_data, n_trials):
+    """Run optimization for time-series task using default params (Optuna skipped for TS)."""
+    import torch
+
+    from backend.core.pipeline import _get_pnpxai_explainer
+
+    handler = get_task_handler("timeseries")
+    proc = handler.preprocess_input(input_data)
+
+    if isinstance(proc, dict) and "tensor" in proc:
+        ts_tensor = proc["tensor"]
+        num_ch = ts_tensor.shape[1]
+        model = handler.load_model(model_name, num_input_channels=num_ch)
+    else:
+        model = handler.load_model(model_name)
+        ts_tensor = proc if isinstance(proc, torch.Tensor) else None
+
+    model.eval()
+    if ts_tensor is not None:
+        with torch.no_grad():
+            out = model(ts_tensor)
+        target_class = int(out.argmax(dim=1).item())
+    else:
+        target_class = 0
+
+    target_tensor = torch.tensor([target_class], dtype=torch.long)
+    predictions = [{"class_name": f"class_{target_class}", "probability": 100.0}]
+
+    ExplainerClass = _get_pnpxai_explainer(explainer_name)
+    explainer_inst = ExplainerClass(model)
+
+    inp = ts_tensor.clone().requires_grad_(True) if ts_tensor is not None else None
+    if inp is not None:
+        torch.manual_seed(42)
+        np.random.seed(42)
+        attr_raw = explainer_inst.attribute(inp, target_tensor)
+        default_metrics = _eval_all_metrics(model, explainer_inst, inp, target_tensor, attr_raw)
+        attribution = normalize_attribution(attr_raw, task="timeseries")
+    else:
+        default_metrics = {}
+        attribution = np.zeros(10)
+
+    available_params = get_explainer_params(explainer_name)
+    default_params = {p["name"]: p["default"] for p in available_params}
+
+    # Render
+    viz_id = f"opt_{int(time.time() * 1000)}"
+    viz_dir = os.path.join(VISUALIZATION_DIR, viz_id)
+    os.makedirs(viz_dir, exist_ok=True)
+    viz_input = proc if isinstance(proc, dict) else input_data
+    handler.render_result(attribution, viz_input, os.path.join(viz_dir, f"{explainer_name}.png"))
+
+    record_id = str(uuid.uuid4())[:8]
+    _save_input_data(record_id, "timeseries", input_data)
+
+    return _build_output(
+        record_id, "timeseries", model_name, explainer_name, metric_name,
+        available_params, default_params, default_params,
+        default_metrics, default_metrics,
+        predictions, f"/api/jobs/{viz_id}/visualizations/{explainer_name}.png",
+        attribution, None,
+    )
+
+
 def run_optimization(task, model_name, explainer_name, metric_name, input_data, n_trials=20):
     if task == "image":
         return _run_image_optimization(model_name, explainer_name, metric_name, input_data, n_trials)
     elif task == "text":
         return _run_text_optimization(model_name, explainer_name, metric_name, input_data, n_trials)
+    elif task == "timeseries":
+        return _run_timeseries_optimization(model_name, explainer_name, metric_name, input_data, n_trials)
     else:
         return {"error": f"Unsupported task: {task}"}
 

@@ -41,6 +41,41 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
   }, []);
 
   const handleMouseUp = useCallback(() => { dragRef.current = null; }, []);
+  const [cardZoom, setCardZoom] = useState(1);
+  const [cardOrigin, setCardOrigin] = useState("center");
+  const [cardPan, setCardPan] = useState({ x: 0, y: 0 });
+  const cardDragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
+  const cardImgRef = useRef<HTMLDivElement>(null);
+
+  const getOriginFromEvent = (e: React.MouseEvent) => {
+    const rect = cardImgRef.current?.getBoundingClientRect();
+    if (!rect) return "center";
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    return `${x}% ${y}%`;
+  };
+
+  const handleCardClick = useCallback((e: React.MouseEvent) => {
+    setCardOrigin(getOriginFromEvent(e));
+    setCardZoom((z) => {
+      const next = Math.min(4, z + 0.5);
+      return next;
+    });
+  }, []);
+
+  const handleCardWheel = useCallback((e: React.WheelEvent) => {
+    e.stopPropagation();
+    const rect = cardImgRef.current?.getBoundingClientRect();
+    if (rect) {
+      const x = ((e.clientX - rect.left) / rect.width) * 100;
+      const y = ((e.clientY - rect.top) / rect.height) * 100;
+      setCardOrigin(`${x}% ${y}%`);
+    }
+    setCardZoom((z) => Math.min(4, Math.max(1, z - e.deltaY * 0.002)));
+  }, []);
+
+  const resetCardZoom = useCallback(() => { setCardZoom(1); setCardOrigin("center"); setCardPan({ x: 0, y: 0 }); }, []);
+
   const isCompleted = result.status === "completed";
   const isNotSupported = result.status === "not_supported";
   const isFailed = result.status === "failed";
@@ -105,47 +140,74 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
         )}
         {isCompleted && result.visualization_url && (
           <>
-            <img
-              src={result.visualization_url}
-              alt={result.display_name}
-              className="w-full h-full object-contain cursor-zoom-in"
-              onDoubleClick={() => { setShowZoom(true); setZoom(1); }}
-            />
+            <div
+              ref={cardImgRef}
+              className="w-full h-full overflow-hidden"
+              onClick={(e) => { if (!cardDragRef.current) handleCardClick(e); }}
+              onWheel={handleCardWheel}
+              onDoubleClick={(e) => { e.stopPropagation(); setShowZoom(true); setZoom(1); setPan({ x: 0, y: 0 }); resetCardZoom(); }}
+              onContextMenu={(e) => { e.preventDefault(); resetCardZoom(); }}
+              onMouseDown={(e) => {
+                if (cardZoom <= 1) return;
+                e.preventDefault();
+                cardDragRef.current = { sx: e.clientX, sy: e.clientY, px: cardPan.x, py: cardPan.y };
+              }}
+              onMouseMove={(e) => {
+                if (!cardDragRef.current) return;
+                setCardPan({
+                  x: cardDragRef.current.px + (e.clientX - cardDragRef.current.sx),
+                  y: cardDragRef.current.py + (e.clientY - cardDragRef.current.sy),
+                });
+              }}
+              onMouseUp={() => { cardDragRef.current = null; }}
+              onMouseLeave={() => { cardDragRef.current = null; }}
+              style={{ cursor: cardZoom > 1 ? (cardDragRef.current ? "grabbing" : "grab") : "zoom-in" }}
+            >
+              <img
+                src={result.visualization_url}
+                alt={result.display_name}
+                className="w-full h-full object-contain"
+                style={{
+                  transform: `translate(${cardPan.x}px, ${cardPan.y}px) scale(${cardZoom})`,
+                  transformOrigin: cardOrigin,
+                  transition: cardDragRef.current ? "none" : "transform 0.15s",
+                }}
+                draggable={false}
+              />
+            </div>
+            {/* Zoom indicator + reset */}
+            {cardZoom > 1 && (
+              <button
+                onClick={resetCardZoom}
+                className="absolute top-2 right-2 z-10 bg-black/50 hover:bg-black/70 text-white rounded-md px-1.5 py-0.5 text-[10px] font-mono transition-colors"
+                title="Reset zoom"
+              >
+                {Math.round(cardZoom * 100)}% ✕
+              </button>
+            )}
+            {/* Unified action buttons — all tasks */}
             <div className="absolute bottom-2 right-2 flex items-center gap-1">
-              {task === "timeseries" && (
-                <button
-                  onClick={() => { setShowZoom(true); setZoom(1); }}
-                  className="bg-white/90 hover:bg-white rounded-md p-1 text-gray-600 hover:text-blue-700 shadow-sm transition-colors"
-                  title="Show all variables"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
-                  </svg>
-                </button>
-              )}
-              {task === "timeseries" && result.visualization_url ? (
-                <a
-                  href={result.visualization_url.replace(".png", "_bundle.zip")}
-                  download={`${result.explainer_name}_attribution.zip`}
-                  className="bg-white/90 hover:bg-white rounded-md p-1 text-gray-600 hover:text-blue-700 shadow-sm transition-colors"
-                  title="Download (ZIP: all variable graphs + Excel data)"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                </a>
-              ) : (
-                <a
-                  href={result.visualization_url ?? ""}
-                  download={`${result.explainer_name}_xai_result.png`}
-                  className="bg-white/90 hover:bg-white rounded-md p-1 text-gray-600 hover:text-blue-700 shadow-sm transition-colors"
-                  title="Download"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                </a>
-              )}
+              {/* Expand (full screen modal) */}
+              <button
+                onClick={() => { setShowZoom(true); setZoom(1); setPan({ x: 0, y: 0 }); }}
+                className="bg-white/90 hover:bg-white rounded-md p-1 text-gray-600 hover:text-blue-700 shadow-sm transition-colors"
+                title="Expand to full screen"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+                </svg>
+              </button>
+              {/* Download */}
+              <a
+                href={task === "timeseries" ? result.visualization_url.replace(".png", "_bundle.zip") : (result.visualization_url ?? "")}
+                download={task === "timeseries" ? `${result.explainer_name}_attribution.zip` : `${result.explainer_name}_xai_result.png`}
+                className="bg-white/90 hover:bg-white rounded-md p-1 text-gray-600 hover:text-blue-700 shadow-sm transition-colors"
+                title={task === "timeseries" ? "Download ZIP (graphs + Excel)" : "Download image"}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              </a>
             </div>
           </>
         )}
