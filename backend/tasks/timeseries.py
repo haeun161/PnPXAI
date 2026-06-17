@@ -85,7 +85,46 @@ class InceptionTimeModel(torch.nn.Module):
         return self.fc(self.pool(out).squeeze(-1))
 
 
+class MOMENTWrapper(torch.nn.Module):
+    """Wrapper around MOMENTPipeline to make it behave like a standard nn.Module.
+    MOMENT uses model(x_enc=x) and returns output.logits, which PnPXAI explainers
+    can't handle directly. This wrapper accepts (batch, channels, seq_len) and returns logits tensor.
+    """
+    def __init__(self, num_input_channels: int = 1, num_classes: int = 5, **kwargs):
+        super().__init__()
+        try:
+            from momentfm import MOMENTPipeline
+            self._pipeline = MOMENTPipeline.from_pretrained(
+                "AutonLab/MOMENT-1-large",
+                model_kwargs={
+                    'task_name': 'classification',
+                    'n_channels': num_input_channels,
+                    'num_class': num_classes,
+                }
+            )
+            self._pipeline.init()
+        except Exception as e:
+            raise RuntimeError(f"Failed to load MOMENT model: {e}. Install with: pip install momentfm --no-deps")
+
+    def forward(self, x):
+        # x: (batch, channels, seq_len)
+        # MOMENT expects exactly 512 timesteps; pad/truncate if needed
+        if x.shape[-1] < 512:
+            pad = torch.zeros(*x.shape[:-1], 512 - x.shape[-1], device=x.device, dtype=x.dtype)
+            x = torch.cat([x, pad], dim=-1)
+        elif x.shape[-1] > 512:
+            x = x[..., :512]
+        output = self._pipeline(x_enc=x)
+        return output.logits
+
+
 _TS_MODELS = {
+    "moment-large": {
+        "display_name": "MOMENT-1-Large",
+        "architecture": "Transformer (T5)",
+        "description": "MOMENT: pre-trained time-series foundation model (AutonLab, 2024). Classification via linear probing on T5 encoder embeddings. Input auto-padded to 512 timesteps.",
+        "loader": MOMENTWrapper,
+    },
     "simple-cnn-1d": {
         "display_name": "Simple 1D CNN",
         "architecture": "1D CNN",

@@ -1,5 +1,40 @@
 [
   {
+    "record_id": "165a70d5",
+    "task": "timeseries",
+    "model_name": "inception-time",
+    "explainer_name": "GradientXInput",
+    "metric_name": "AbPC",
+    "default_params": {},
+    "optimized_params": {},
+    "default_metrics": {
+      "mu_fidelity": null,
+      "abpc": 0.06571064889431,
+      "sensitivity": 0.2725507318973541,
+      "complexity": 1.8419752442595194
+    },
+    "optimized_metrics": {
+      "mu_fidelity": null,
+      "abpc": 0.06571064889431,
+      "sensitivity": 0.2725507318973541,
+      "complexity": 1.8419752442595194
+    },
+    "available_params": [],
+    "predictions": [
+      {
+        "class_name": "class_1",
+        "probability": 100.0
+      }
+    ],
+    "visualization_url": "/api/jobs/opt_1781686094821/visualizations/GradientXInput.png",
+    "attribution_summary": {
+      "mean": 0.212255597114563,
+      "max": 1.0,
+      "nonzero_ratio": 0.5923076923076923
+    },
+    "timestamp": 1781686100.0835419
+  },
+  {
     "record_id": "9d48361a",
     "task": "text",
     "model_name": "distilbert-sst2",
@@ -203,44 +238,5 @@
       "nonzero_ratio": 0.46923076923076923
     },
     "timestamp": 1781681693.510367
-  },
-  {
-    "record_id": "6905e936",
-    "task": "text",
-    "model_name": "distilbert-sst2",
-    "explainer_name": "GradientXInput",
-    "metric_name": "AbPC",
-    "default_params": {},
-    "optimized_params": {},
-    "default_metrics": {
-      "mu_fidelity": null,
-      "abpc": 0.799673855304718,
-      "sensitivity": 2.9697861671447754,
-      "complexity": 0.21793222714034918
-    },
-    "optimized_metrics": {
-      "mu_fidelity": null,
-      "abpc": 0.799673855304718,
-      "sensitivity": 3.8581111431121826,
-      "complexity": 0.21793222714034918
-    },
-    "available_params": [],
-    "predictions": [
-      {
-        "class_name": "POSITIVE",
-        "probability": 99.18
-      },
-      {
-        "class_name": "NEGATIVE",
-        "probability": 0.82
-      }
-    ],
-    "visualization_url": "/api/jobs/opt_1781681496940/visualizations/GradientXInput.png",
-    "attribution_summary": {
-      "mean": 0.14249898493289948,
-      "max": 1.0,
-      "nonzero_ratio": 0.4666666666666667
-    },
-    "timestamp": 1781681499.3918188
   }
 ]

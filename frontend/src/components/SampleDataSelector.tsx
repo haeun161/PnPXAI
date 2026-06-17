@@ -22,6 +22,12 @@ const SAMPLE_INFO: Record<string, { desc: string; source: string; url?: string; 
   "negative_review.txt": { desc: "Negative sentiment movie review.", source: "Sample text", task: "text" },
   "neutral_review.txt": { desc: "Neutral sentiment movie review.", source: "Sample text", task: "text" },
   // Time-series (real UCR/UEA data)
+  "ecg5000.csv": {
+    desc: "ECG heartbeat classification (5 classes: normal + 4 abnormal). 1 channel, 512 timesteps (padded). From UCR ECG5000 dataset.",
+    source: "UCR Time Series Archive — ECG5000",
+    url: "https://www.timeseriesclassification.com/description.php?Dataset=ECG5000",
+    task: "timeseries",
+  },
   "basic_motions.csv": {
     desc: "6-axis accelerometer & gyroscope data capturing body motions (badminton, running, standing, walking). 6 channels, 100 timesteps.",
     source: "UEA Multivariate TS Archive — BasicMotions",
