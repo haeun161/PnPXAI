@@ -317,7 +317,7 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
           Expand ({rankedResults.length})
         </button>
       </div>
-      <div className={`flex gap-3 overflow-x-auto pb-2 ${task === "text" ? "h-[490px]" : task === "timeseries" ? "flex-1 min-h-0" : "h-100"}`}>
+      <div className="flex gap-3 overflow-x-auto pb-2 flex-1 min-h-0">
         {rankedResults.map((r) => (
           <div key={r.explainer_name} className="flex-shrink-0 h-full" style={{ width: task === "timeseries" ? "calc((100% - 0.75rem) / 2)" : "calc((100% - 2.25rem) / 4)" }}>
             <ResultCard result={r} task={task} activeMetrics={activeMetrics} modelName={job?.model_name} dataUrl={job?.original_data_url} />

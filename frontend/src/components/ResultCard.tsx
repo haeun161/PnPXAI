@@ -132,7 +132,7 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
         </div>
       )}
 
-      <div className={`relative bg-gray-50 flex-shrink-0 ${task === "text" ? "h-[380px]" : task === "timeseries" ? "flex-1 min-h-0" : "flex-1 min-h-0"}`}>
+      <div className="relative bg-gray-50 flex-1 min-h-0">
         {result.rank != null && (
           <div className="absolute top-2 left-2 z-10 w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shadow">
             #{result.rank}
