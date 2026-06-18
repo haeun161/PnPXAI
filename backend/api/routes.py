@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api")
 # In-memory store for detect-rank jobs
 _detect_rank_jobs: dict[str, dict] = {}
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB (large CSV time-series support)
 
 
 @router.get("/tasks", response_model=list[TaskInfo])
@@ -458,9 +458,17 @@ async def get_samples(task: str, model: Optional[str] = Query(None)):
     sample_dir = os.path.join("sample_data", task)
     if not os.path.exists(sample_dir):
         return []
+    # Priority ordering: listed files appear first, rest alphabetical
+    _PRIORITY = {"timeseries": ["boiler.csv", "ecg5000.csv"]}
     files = glob.glob(os.path.join(sample_dir, "*"))
+    priority_list = _PRIORITY.get(task, [])
+    def _sort_key(fp):
+        name = os.path.basename(fp)
+        if name in priority_list:
+            return (0, priority_list.index(name))
+        return (1, name)
     result = []
-    for f in sorted(files):
+    for f in sorted(files, key=_sort_key):
         name = os.path.basename(f)
         entry: dict = {"name": name, "path": f"/{task}/{name}"}
 
@@ -469,7 +477,7 @@ async def get_samples(task: str, model: Optional[str] = Query(None)):
             try:
                 from backend.tasks.timeseries import _parse_ts_csv, _TS_MODELS
                 with open(f, "rb") as fh:
-                    _, cols = _parse_ts_csv(fh.read())
+                    _, cols, _, _ = _parse_ts_csv(fh.read())
                 entry["channels"] = len(cols)
                 entry["col_names"] = cols
                 if model and model in _TS_MODELS:

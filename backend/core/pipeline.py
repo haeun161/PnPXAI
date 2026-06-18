@@ -11,6 +11,53 @@ from backend.core.job_manager import (
     update_job_result, update_result_step, VISUALIZATION_DIR,
 )
 
+def _sliding_window_attribution(explainer_instance, input_tensor, target_tensor, window_size=512, stride=None):
+    """Compute attribution via sliding windows for large time-series.
+
+    Splits input_tensor (1, channels, seq_len) into overlapping windows of window_size,
+    computes attribution for each, and stitches them back together.
+    For overlapping regions, attributions are averaged.
+    """
+    seq_len = input_tensor.shape[-1]
+    if stride is None:
+        stride = window_size  # non-overlapping by default
+
+    if seq_len <= window_size:
+        # Small enough — compute directly
+        try:
+            return explainer_instance.attribute(input_tensor, target_tensor)
+        except TypeError:
+            return explainer_instance.attribute(inputs=input_tensor, targets=target_tensor)
+
+    # Accumulate attributions and counts for averaging overlaps
+    attr_sum = torch.zeros_like(input_tensor)
+    attr_count = torch.zeros(1, 1, seq_len, device=input_tensor.device)
+
+    starts = list(range(0, seq_len - window_size + 1, stride))
+    # Ensure last window covers the tail
+    if starts[-1] + window_size < seq_len:
+        starts.append(seq_len - window_size)
+
+    for s in starts:
+        window = input_tensor[..., s:s + window_size].clone()
+        if window.is_floating_point():
+            window = window.requires_grad_(True)
+        try:
+            w_attr = explainer_instance.attribute(window, target_tensor)
+        except TypeError:
+            w_attr = explainer_instance.attribute(inputs=window, targets=target_tensor)
+
+        if isinstance(w_attr, torch.Tensor):
+            attr_sum[..., s:s + window_size] += w_attr.detach()
+        else:
+            attr_sum[..., s:s + window_size] += torch.tensor(w_attr)
+        attr_count[..., s:s + window_size] += 1
+
+    # Average overlapping regions
+    attr_count = attr_count.clamp(min=1)
+    return attr_sum / attr_count
+
+
 def _find_cam_target_layer(model: torch.nn.Module) -> Optional[torch.nn.Module]:
     """Return the layer just before global avg-pooling, matching pnpxai's intent.
 
@@ -281,9 +328,37 @@ def run_explanation_pipeline(
 
                 model = handler.load_model(model_name, num_input_channels=data_channels)
                 explainer_model = model
+
+                # Run inference for prediction display
+                model.eval()
+                with torch.no_grad():
+                    # For large data, use first window for inference
+                    window_size = params.get("window_size", 512)
+                    infer_input = input_tensor
+                    if input_tensor.shape[-1] > window_size:
+                        infer_input = input_tensor[..., :window_size]
+                    ts_output = model(infer_input)
+                    ts_probs = torch.softmax(ts_output, dim=1)[0]
+                    target_class = ts_probs.argmax().item()
+
+                # Build predictions from label_info or model output
+                label_info = input_data.get("label_info")
+                if label_info and len(label_info["classes"]) == ts_probs.shape[0]:
+                    class_names = {0: "Normal", 1: "Abnormal"} if set(label_info["classes"]) == {0, 1} else {}
+                    predictions = [
+                        {"class_name": class_names.get(c, str(c)), "probability": round(ts_probs[i].item() * 100, 2)}
+                        for i, c in enumerate(label_info["classes"])
+                    ]
+                else:
+                    predictions = [
+                        {"class_name": f"Class {i}", "probability": round(p.item() * 100, 2)}
+                        for i, p in enumerate(ts_probs)
+                    ]
+                predictions.sort(key=lambda x: x["probability"], reverse=True)
+                update_job_predictions(job_id, predictions)
             else:
                 input_tensor = input_data if isinstance(input_data, torch.Tensor) else None
-            target_class = 0
+                target_class = 0
 
         # For each explainer: attribution + metrics + visualization
         job_dir = os.path.join(VISUALIZATION_DIR, job_id)
@@ -361,10 +436,19 @@ def run_explanation_pipeline(
                 update_result_step(job_id, exp_name, attribution_step)
                 target_tensor = torch.tensor([target_class], dtype=torch.long)
                 if active_inp is not None:
-                    try:
-                        attribution_raw = explainer_instance.attribute(active_inp, target_tensor)
-                    except TypeError:
-                        attribution_raw = explainer_instance.attribute(inputs=active_inp, targets=target_tensor)
+                    # Use sliding window for large timeseries
+                    ts_window_size = params.get("window_size", 512)
+                    if task == "timeseries" and active_inp.dim() == 3 and active_inp.shape[-1] > ts_window_size:
+                        update_result_step(job_id, exp_name, f"{attribution_step} (sliding window)")
+                        attribution_raw = _sliding_window_attribution(
+                            explainer_instance, active_inp, target_tensor,
+                            window_size=ts_window_size,
+                        )
+                    else:
+                        try:
+                            attribution_raw = explainer_instance.attribute(active_inp, target_tensor)
+                        except TypeError:
+                            attribution_raw = explainer_instance.attribute(inputs=active_inp, targets=target_tensor)
                     attribution = normalize_attribution(attribution_raw, task=task)
                 else:
                     attribution = np.zeros(10)

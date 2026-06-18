@@ -21,35 +21,17 @@ const SAMPLE_INFO: Record<string, { desc: string; source: string; url?: string; 
   "positive_review.txt": { desc: "Positive sentiment movie review.", source: "Sample text", task: "text" },
   "negative_review.txt": { desc: "Negative sentiment movie review.", source: "Sample text", task: "text" },
   "neutral_review.txt": { desc: "Neutral sentiment movie review.", source: "Sample text", task: "text" },
-  // Time-series (real UCR/UEA data)
+  // Time-series
+  "boiler.csv": {
+    desc: "Simulated industrial boiler sensor data for fault detection & classification. 20 sensor channels (steam pressure, temperatures, damper angle, gas consumption, etc.), 200 timesteps. Binary label: normal vs. abnormal blow-down.",
+    source: "IEEE DataPort — Simulated Boiler Data for Fault Detection and Classification",
+    url: "https://ieee-dataport.org/open-access/simulated-boiler-data-fault-detection-and-classification",
+    task: "timeseries",
+  },
   "ecg5000.csv": {
-    desc: "ECG heartbeat classification (5 classes: normal + 4 abnormal). 1 channel, 512 timesteps (padded). From UCR ECG5000 dataset.",
+    desc: "ECG heartbeat classification (5 classes: normal + 4 abnormal). 1 channel, 140 timesteps. From UCR ECG5000 dataset.",
     source: "UCR Time Series Archive — ECG5000",
     url: "https://www.timeseriesclassification.com/description.php?Dataset=ECG5000",
-    task: "timeseries",
-  },
-  "basic_motions.csv": {
-    desc: "6-axis accelerometer & gyroscope data capturing body motions (badminton, running, standing, walking). 6 channels, 100 timesteps.",
-    source: "UEA Multivariate TS Archive — BasicMotions",
-    url: "https://www.timeseriesclassification.com/description.php?Dataset=BasicMotions",
-    task: "timeseries",
-  },
-  "ering.csv": {
-    desc: "Finger ring gesture recognition using 4 sensor channels. 65 timesteps per sample.",
-    source: "UEA Multivariate TS Archive — ERing",
-    url: "https://www.timeseriesclassification.com/description.php?Dataset=ERing",
-    task: "timeseries",
-  },
-  "heartbeat.csv": {
-    desc: "4-lead ECG (electrocardiogram) recording for normal/abnormal heartbeat classification. 200 timesteps.",
-    source: "UEA Multivariate TS Archive — Heartbeat",
-    url: "https://www.timeseriesclassification.com/description.php?Dataset=Heartbeat",
-    task: "timeseries",
-  },
-  "natops_gesture.csv": {
-    desc: "Naval Air Training body sensor data for gesture classification. 24 joint channels, 51 timesteps.",
-    source: "UEA Multivariate TS Archive — NATOPS",
-    url: "https://www.timeseriesclassification.com/description.php?Dataset=NATOPS",
     task: "timeseries",
   },
 };
@@ -152,12 +134,12 @@ export default function SampleDataSelector({ task, model, onSampleSelect, disabl
               {task === "timeseries" && previews[s.name] && (
                 <div className="w-full h-16 rounded bg-gray-50 border border-gray-100 mb-1.5 flex items-end px-1 pb-1 gap-px overflow-hidden">
                   {(() => {
-                    const vals = previews[s.name]
-                      .split("\n").filter((l) => l && !isNaN(parseFloat(l.split(",")[0])))
-                      .flatMap((l) => l.split(",").map((v) => parseFloat(v.trim())))
-                      .filter((v) => !isNaN(v));
-                    const min = Math.min(...vals);
-                    const max = Math.max(...vals);
+                    const lines = previews[s.name].split("\n").filter((l) => l && !isNaN(parseFloat(l.split(",")[0])));
+                    // Use only first column for preview bar chart
+                    const vals = lines.map((l) => parseFloat(l.split(",")[0])).filter((v) => !isNaN(v));
+                    if (vals.length === 0) return null;
+                    let min = vals[0], max = vals[0];
+                    for (const v of vals) { if (v < min) min = v; if (v > max) max = v; }
                     const range = max - min || 1;
                     const step = Math.max(1, Math.floor(vals.length / 30));
                     const sampled = vals.filter((_, i) => i % step === 0);
@@ -241,7 +223,7 @@ export default function SampleDataSelector({ task, model, onSampleSelect, disabl
                 <p className="text-[8px] text-red-400 truncate">{s.reason}</p>
               )}
               {s.channels && s.channels > 1 && !isIncompat && (
-                <p className="text-[8px] text-gray-400">{s.channels}ch: {s.col_names?.join(", ")}</p>
+                <p className="text-[8px] text-gray-400 truncate">{s.channels} channels</p>
               )}
             </button>
           );

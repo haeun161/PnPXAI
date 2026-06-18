@@ -90,12 +90,15 @@ class MOMENTWrapper(torch.nn.Module):
     MOMENT uses model(x_enc=x) and returns output.logits, which PnPXAI explainers
     can't handle directly. This wrapper accepts (batch, channels, seq_len) and returns logits tensor.
     """
-    def __init__(self, num_input_channels: int = 1, num_classes: int = 5, **kwargs):
+    REQUIRED_SEQ_LEN = 512
+
+    def __init__(self, num_input_channels: int = 1, num_classes: int = 5,
+                 model_name: str = "AutonLab/MOMENT-1-large", **kwargs):
         super().__init__()
         try:
             from momentfm import MOMENTPipeline
             self._pipeline = MOMENTPipeline.from_pretrained(
-                "AutonLab/MOMENT-1-large",
+                model_name,
                 model_kwargs={
                     'task_name': 'classification',
                     'n_channels': num_input_channels,
@@ -104,26 +107,45 @@ class MOMENTWrapper(torch.nn.Module):
             )
             self._pipeline.init()
         except Exception as e:
-            raise RuntimeError(f"Failed to load MOMENT model: {e}. Install with: pip install momentfm --no-deps")
+            raise RuntimeError(f"Failed to load MOMENT model ({model_name}): {e}. Install with: pip install momentfm --no-deps")
 
     def forward(self, x):
         # x: (batch, channels, seq_len)
-        # MOMENT expects exactly 512 timesteps; pad/truncate if needed
-        if x.shape[-1] < 512:
-            pad = torch.zeros(*x.shape[:-1], 512 - x.shape[-1], device=x.device, dtype=x.dtype)
+        seq_len = x.shape[-1]
+        if seq_len < self.REQUIRED_SEQ_LEN:
+            pad = torch.zeros(*x.shape[:-1], self.REQUIRED_SEQ_LEN - seq_len, device=x.device, dtype=x.dtype)
             x = torch.cat([x, pad], dim=-1)
-        elif x.shape[-1] > 512:
-            x = x[..., :512]
-        output = self._pipeline(x_enc=x)
+        elif seq_len > self.REQUIRED_SEQ_LEN:
+            x = x[..., :self.REQUIRED_SEQ_LEN]
+
+        # Build input_mask: 1 for real data, 0 for padding
+        input_mask = torch.ones(x.shape[0], self.REQUIRED_SEQ_LEN, device=x.device)
+        if seq_len < self.REQUIRED_SEQ_LEN:
+            input_mask[:, seq_len:] = 0
+
+        output = self._pipeline(x_enc=x, input_mask=input_mask)
         return output.logits
+
+
+def _moment_large_loader(**kwargs):
+    return MOMENTWrapper(model_name="AutonLab/MOMENT-1-large", **kwargs)
+
+def _moment_small_loader(**kwargs):
+    return MOMENTWrapper(model_name="AutonLab/MOMENT-1-small", **kwargs)
 
 
 _TS_MODELS = {
     "moment-large": {
         "display_name": "MOMENT-1-Large",
         "architecture": "Transformer (T5)",
-        "description": "MOMENT: pre-trained time-series foundation model (AutonLab, 2024). Classification via linear probing on T5 encoder embeddings. Input auto-padded to 512 timesteps.",
-        "loader": MOMENTWrapper,
+        "description": "MOMENT large: pre-trained time-series foundation model. Input auto-padded to 512 timesteps.",
+        "loader": _moment_large_loader,
+    },
+    "moment-small": {
+        "display_name": "MOMENT-1-Small",
+        "architecture": "Transformer (T5)",
+        "description": "MOMENT small: lightweight version, faster inference. Input auto-padded to 512 timesteps.",
+        "loader": _moment_small_loader,
     },
     "simple-cnn-1d": {
         "display_name": "Simple 1D CNN",
@@ -140,8 +162,47 @@ _TS_MODELS = {
 }
 
 
+def _parse_time_column(time_series: pd.Series) -> list[str]:
+    """Parse TIME column (e.g. '10hh45mm') into 'Day1 10:45' format labels."""
+    labels = []
+    day = 1
+    prev_minutes = -1
+    for val in time_series:
+        s = str(val).strip()
+        # Parse formats like "10hh45mm", "10:45", etc.
+        import re
+        m = re.match(r'(\d+)hh(\d+)mm', s)
+        if m:
+            h, mi = int(m.group(1)), int(m.group(2))
+        else:
+            m2 = re.match(r'(\d+):(\d+)', s)
+            if m2:
+                h, mi = int(m2.group(1)), int(m2.group(2))
+            else:
+                labels.append(s)
+                continue
+        total_minutes = h * 60 + mi
+        if prev_minutes >= 0 and total_minutes < prev_minutes:
+            day += 1
+        prev_minutes = total_minutes
+        labels.append(f"D{day} {h:02d}:{mi:02d}")
+    return labels
+
+
+# Columns that are known non-sensor (auto-detected and separated)
+_NON_SENSOR_PATTERNS = {"boiler_no", "time", "timestamp", "date", "datetime", "index", "id"}
+_LABEL_PATTERNS = {"abnormal", "label", "class", "target", "fault", "anomaly"}
+
+
 def _parse_ts_csv(raw_bytes: bytes):
-    """Parse CSV into (tensor, column_names). Supports single and multi-variate."""
+    """Parse CSV into (tensor, col_names, time_labels, label_info).
+
+    Automatically detects and separates:
+    - Time columns → parsed into Day/HH:MM labels
+    - Label/target columns → extracted for classification display
+    - ID/index columns → dropped
+    Returns: (tensor, sensor_col_names, time_labels_or_None, label_info_or_None)
+    """
     import io
     text = raw_bytes.decode("utf-8", errors="replace").strip()
     lines = text.split("\n")
@@ -156,7 +217,36 @@ def _parse_ts_csv(raw_bytes: bytes):
 
     df = pd.read_csv(io.BytesIO(raw_bytes), header=0 if has_header else None)
 
-    # Drop timestamp/index columns if they look like sequential integers
+    # Auto-detect special columns
+    time_labels = None
+    label_info = None
+    drop_cols = []
+
+    if has_header:
+        for col in df.columns:
+            col_lower = str(col).lower().strip()
+            # Check for label/target columns
+            if any(p in col_lower for p in _LABEL_PATTERNS):
+                unique_vals = df[col].dropna().unique()
+                label_info = {
+                    "column": col,
+                    "values": df[col].values,
+                    "classes": sorted(unique_vals.tolist()),
+                }
+                drop_cols.append(col)
+            # Check for time columns
+            elif col_lower in _NON_SENSOR_PATTERNS or col_lower == "time":
+                # Try to parse as time labels
+                if df[col].dtype == object:
+                    time_labels = _parse_time_column(df[col])
+                drop_cols.append(col)
+            # Check for ID/index columns
+            elif col_lower in _NON_SENSOR_PATTERNS:
+                drop_cols.append(col)
+
+        df = df.drop(columns=drop_cols, errors="ignore")
+
+    # Drop sequential integer index columns
     if df.shape[1] > 1 and df.iloc[:, 0].dtype in (np.int64, np.float64):
         first_col = df.iloc[:, 0].values
         if np.allclose(first_col, np.arange(len(first_col))):
@@ -169,7 +259,7 @@ def _parse_ts_csv(raw_bytes: bytes):
     values = df.values.astype(np.float32)  # (seq_len, num_channels)
     # Tensor: (1, num_channels, seq_len)
     tensor = torch.tensor(values.T).unsqueeze(0)
-    return tensor, col_names
+    return tensor, col_names, time_labels, label_info
 
 
 class TimeSeriesTaskHandler(TaskHandler):
@@ -206,8 +296,13 @@ class TimeSeriesTaskHandler(TaskHandler):
 
     def preprocess_input(self, raw_data: Any) -> Any:
         if isinstance(raw_data, bytes):
-            tensor, col_names = _parse_ts_csv(raw_data)
-            return {"tensor": tensor, "col_names": col_names}
+            tensor, col_names, time_labels, label_info = _parse_ts_csv(raw_data)
+            result = {"tensor": tensor, "col_names": col_names}
+            if time_labels is not None:
+                result["time_labels"] = time_labels
+            if label_info is not None:
+                result["label_info"] = label_info
+            return result
         elif isinstance(raw_data, str):
             values = [float(v.strip()) for v in raw_data.split(",") if v.strip()]
             tensor = torch.tensor(values, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # (1,1,seq_len)
@@ -219,11 +314,13 @@ class TimeSeriesTaskHandler(TaskHandler):
         return TimeSeriesModality()
 
     def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str) -> str:
+        time_labels = None
         try:
             if isinstance(input_data, dict):
                 tensor = input_data["tensor"]
                 col_names = input_data["col_names"]
                 signals = tensor.squeeze(0).detach().cpu().numpy()
+                time_labels = input_data.get("time_labels")
 
             elif isinstance(input_data, torch.Tensor):
                 signals = input_data.squeeze(0).detach().cpu().numpy()
@@ -234,7 +331,7 @@ class TimeSeriesTaskHandler(TaskHandler):
                 col_names = [f"var_{i+1}" for i in range(signals.shape[0])]
 
             elif isinstance(input_data, bytes):
-                tensor, col_names = _parse_ts_csv(input_data)
+                tensor, col_names, time_labels, _ = _parse_ts_csv(input_data)
                 signals = tensor.squeeze(0).detach().cpu().numpy()
 
             else:
@@ -255,4 +352,4 @@ class TimeSeriesTaskHandler(TaskHandler):
             signals = np.zeros((1, max(attr_len, 10)))
             col_names = ["value"]
 
-        return render_timeseries_attribution(signals, attribution, output_path, col_names)
+        return render_timeseries_attribution(signals, attribution, output_path, col_names, time_labels=time_labels)
