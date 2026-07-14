@@ -45,12 +45,12 @@ export default function ImageUploader({ onImageSelect, disabled }: Props) {
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
         onClick={() => !disabled && inputRef.current?.click()}
-        className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
+        className={`border-2 border-dashed rounded-xl text-center cursor-pointer transition-colors ${preview ? "p-2" : "p-6"} ${
           dragOver ? "border-blue-500 bg-blue-50" : "border-gray-300 hover:border-gray-400"
         } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
       >
         {preview ? (
-          <img src={preview} alt="Preview" className="mx-auto max-h-48 rounded-lg object-contain" />
+          <img src={preview} alt="Preview" className="mx-auto max-h-24 rounded-lg object-contain" />
         ) : (
           <div className="text-gray-500">
             <svg className="mx-auto h-10 w-10 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">

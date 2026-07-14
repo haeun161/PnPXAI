@@ -8,7 +8,7 @@ def render_heatmap(
     original_image: np.ndarray,
     attribution_map: np.ndarray,
     output_path: str,
-    colormap: str = "jet",
+    colormap: str = "RdBu_r",
     alpha: float = 0.5,
 ) -> str:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)

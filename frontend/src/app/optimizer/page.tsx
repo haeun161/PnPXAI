@@ -60,8 +60,8 @@ function computeDisplayMetrics(metrics: Record<string, number | null> | undefine
   }
   return [
     { label: "Faithfulness", value: faithfulness },
-    { label: "Robustness",   value: sensitivity != null ? -sensitivity : null },
-    { label: "Compactness",  value: complexity  != null ? -complexity  : null },
+    { label: "Robustness",   value: sensitivity ?? null },
+    { label: "Compactness",  value: complexity  ?? null },
   ];
 }
 
@@ -71,7 +71,7 @@ function MetricDisplay({ metrics, taskType }: { metrics: Record<string, number |
     <div className="grid grid-cols-3 gap-1.5">
       {items.map(({ label, value }) => (
         <div key={label} className="bg-gray-50 rounded px-2 py-1 text-center">
-          <p className="text-[9px] text-gray-400">{label}</p>
+          <p className="text-xs text-gray-400">{label}</p>
           <p className="text-xs font-mono font-medium text-gray-700">
             {value != null ? Number(value).toFixed(4) : "N/A"}
           </p>
@@ -128,6 +128,7 @@ export default function OptimizerPage() {
   const [inputFile, setInputFile] = useState<File | Blob | null>(null);
   const [inputPreview, setInputPreview] = useState<string | null>(null);
   const [sourceDataUrl, setSourceDataUrl] = useState<string | null>(null);
+  const [sourcePredictions, setSourcePredictions] = useState<{ class_name: string; probability: number }[] | null>(null);
   const [zoomSrc, setZoomSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [customLoading, setCustomLoading] = useState(false);
@@ -159,13 +160,85 @@ export default function OptimizerPage() {
     const m = params.get("model");
     const e = params.get("explainer");
     const dataUrl = params.get("data_url");
+    const vizUrl = params.get("viz_url");
     if (t) setTask(t as TaskType);
     if (m) setModel(m);
     if (e) setExplainer(e);
+    if (dataUrl) setSourceDataUrl(dataUrl);
+
+    // If we have an existing viz_url from ResultCard, display it immediately without running optimization
+    if (vizUrl && t && m && e) {
+      // Fetch predictions from job API if dataUrl contains a job_id
+      if (dataUrl) {
+        const jobIdMatch = dataUrl.match(/\/api\/jobs\/([^/]+)\//);
+        if (jobIdMatch) {
+          fetch(`${BASE}/jobs/${jobIdMatch[1]}`)
+            .then((r) => r.json())
+            .then((job) => { if (job.predictions) setSourcePredictions(job.predictions); })
+            .catch(() => {});
+        }
+      }
+
+      const mu_fidelity = params.get("mu_fidelity");
+      const abpc = params.get("abpc");
+      const sensitivity = params.get("sensitivity");
+      const complexity = params.get("complexity");
+      const existingMetrics: Record<string, number | null> = {
+        mu_fidelity: mu_fidelity != null ? parseFloat(mu_fidelity) : null,
+        abpc: abpc != null ? parseFloat(abpc) : null,
+        sensitivity: sensitivity != null ? parseFloat(sensitivity) : null,
+        complexity: complexity != null ? parseFloat(complexity) : null,
+      };
+      // Fetch available params from backend
+      fetch(`${BASE}/optimizer/params/${e}`)
+        .then((r) => r.json())
+        .then((availableParams) => {
+          const defaultParams = Object.fromEntries(availableParams.map((p: ParamDef) => [p.name, p.default]));
+          setOptResult({
+            record_id: "",
+            task: t,
+            model_name: m,
+            explainer_name: e,
+            default_params: defaultParams,
+            optimized_params: defaultParams,
+            default_metrics: existingMetrics,
+            optimized_metrics: existingMetrics,
+            available_params: availableParams,
+            predictions: [],
+            visualization_url: vizUrl,
+          });
+          setCustomParams(defaultParams);
+        })
+        .catch(() => {
+          setOptResult({
+            record_id: "",
+            task: t,
+            model_name: m,
+            explainer_name: e,
+            default_params: {},
+            optimized_params: {},
+            default_metrics: existingMetrics,
+            optimized_metrics: existingMetrics,
+            available_params: [],
+            predictions: [],
+            visualization_url: vizUrl,
+          });
+        });
+      // Still fetch the file in background so user can run custom optimization later
+      fetch(dataUrl ?? vizUrl)
+        .then((r) => r.blob())
+        .then((blob) => {
+          setInputFile(blob);
+          if (t === "image") setInputPreview(URL.createObjectURL(blob));
+        })
+        .catch(console.error);
+      return;
+    }
+
+    // No existing result — auto-run optimization
     if (dataUrl && t && m && e) {
       autoRunRef.current = true;
       autoRunParamsRef.current = { task: t, model: m, explainer: e };
-      setSourceDataUrl(dataUrl);
       fetch(dataUrl)
         .then((r) => r.blob())
         .then((blob) => {
@@ -176,7 +249,7 @@ export default function OptimizerPage() {
     }
   }, []);
 
-  // Auto-run when coming from ResultCard "Optimize" button
+  // Auto-run when coming from ResultCard without existing result
   useEffect(() => {
     if (!autoRunRef.current || !inputFile || !autoRunParamsRef.current) return;
     const { task: t, model: m, explainer: e } = autoRunParamsRef.current;
@@ -365,9 +438,13 @@ export default function OptimizerPage() {
                 <button
                   onClick={handleOptimize}
                   disabled={!task || !model || !explainer || !inputFile || loading}
-                  className="w-full py-2.5 rounded-lg font-semibold text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                  className="w-full py-1.5 text-sm rounded-lg font-semibold text-white bg-blue-500 border-2 border-blue-500 hover:bg-blue-100 hover:border-blue-500 disabled:border-gray-200 disabled:text-gray-400 disabled:bg-white disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5"
                 >
-                  {loading ? "Optimizing..." : "Run Optimization"}
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  {loading ? "OPTIMIZING..." : "OPTIMIZATION"}
                 </button>
               </>
             )}
@@ -400,7 +477,7 @@ export default function OptimizerPage() {
                       await Promise.all(toDelete.map((h) => fetch(`${BASE}/optimizer/history/${h.record_id}`, { method: "DELETE" })));
                       setHistory((prev) => prev.filter((h) => h.record_id === restoredRecordId));
                     }}
-                    className="text-[10px] text-gray-400 hover:text-red-500 transition-colors"
+                    className="text-xs text-gray-400 hover:text-red-500 transition-colors"
                   >
                     Clear all
                   </button>
@@ -497,38 +574,41 @@ export default function OptimizerPage() {
               <div className="space-y-4">
                 <PredictionInfo
                   dataUrl={sourceDataUrl ?? inputPreview}
-                  predictions={optResult.predictions}
+                  predictions={sourcePredictions ?? optResult.predictions}
                   task={optResult.task as TaskType}
                 />
 
                 <div className="grid grid-cols-2 gap-4">
                   {/* Left: Optimized - FIXED */}
-                  <div className="bg-white rounded-xl border-2 border-green-200 p-4 space-y-3">
-                    <h3 className="text-sm font-semibold text-green-700 flex items-center gap-1">
+                  <div className="bg-white rounded-xl border-2 border-green-200 p-4 flex flex-col gap-3">
+                    <h3 className="text-sm font-semibold text-green-700 flex items-center gap-1.5">
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      Optimized Result
+                      Auto-Optimized Result
+                      <span className="ml-1 px-2.5 py-0.5 rounded-full bg-green-100 text-green-800 text-sm font-semibold">
+                        {explainers.find(e => e.name === optResult.explainer_name)?.display_name ?? optResult.explainer_name}
+                      </span>
                     </h3>
                     {optResult.visualization_url && (
-                      <div className="bg-gray-50 rounded-lg overflow-hidden relative group">
-                        <img src={optResult.visualization_url} alt="Optimized XAI" className="w-full max-h-96 object-contain cursor-zoom-in" onClick={() => setZoomSrc(optResult.visualization_url)} />
+                      <div className="bg-gray-50 rounded-lg overflow-hidden relative group flex-1">
+                        <img src={optResult.visualization_url} alt="Optimized XAI" className="w-full max-h-[calc(100vh-560px)] object-contain cursor-zoom-in" onClick={() => setZoomSrc(optResult.visualization_url)} />
                         <a
                           href={optResult.visualization_url}
                           download={buildDownloadName(optResult.optimized_params, optResult.explainer_name)}
-                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 rounded-md px-2 py-1 text-[10px] text-gray-600 hover:text-gray-900 shadow-sm flex items-center gap-1"
+                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 rounded-md px-2 py-1 text-xs text-gray-600 hover:text-gray-900 shadow-sm flex items-center gap-1"
                         >
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                           Download
                         </a>
                       </div>
                     )}
-                    <div className="grid grid-cols-2 divide-x divide-gray-100 border border-gray-100 rounded-lg overflow-hidden">
+                    <div className="grid items-stretch divide-x divide-gray-100 border border-gray-100 rounded-lg overflow-hidden" style={{ gridTemplateColumns: "2fr 3fr" }}>
                       <div className="p-2">
-                        <p className="text-[10px] font-semibold text-gray-500 mb-1">PARAMETERS</p>
+                        <p className="text-xs font-semibold text-gray-500 mb-1">PARAMETERS</p>
                         <div className="space-y-0.5">
                           {Object.entries(optResult.optimized_params ?? {}).length === 0 && (
-                            <p className="text-[10px] text-gray-400 italic">None</p>
+                            <p className="text-xs text-gray-400 italic">None</p>
                           )}
                           {Object.entries(optResult.optimized_params ?? {}).map(([k, v]) => (
                             <div key={k} className="flex justify-between text-xs gap-2">
@@ -539,55 +619,68 @@ export default function OptimizerPage() {
                         </div>
                       </div>
                       <div className="p-2">
-                        <p className="text-[10px] font-semibold text-gray-500 mb-1">METRICS</p>
+                        <p className="text-xs font-semibold text-gray-500 mb-1">METRICS</p>
                         <MetricDisplay metrics={optResult.optimized_metrics} taskType={optResult.task} />
                       </div>
                     </div>
                   </div>
 
                   {/* Right: Custom - UPDATES */}
-                  <div className="bg-white rounded-xl border-2 border-blue-200 p-4 space-y-3">
-                    <h3 className="text-sm font-semibold text-blue-700 flex items-center gap-1">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                      Custom Parameters
-                    </h3>
-                    {customResult?.visualization_url ? (
-                      <div className="bg-gray-50 rounded-lg overflow-hidden relative group">
-                        <img src={customResult.visualization_url} alt="Custom XAI" className="w-full max-h-96 object-contain cursor-zoom-in" onClick={() => setZoomSrc(customResult.visualization_url)} />
+                  <div className="bg-white rounded-xl border-2 border-blue-200 p-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-semibold text-blue-700 flex items-center gap-1">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        User-Tuned Result
+                      </h3>
+                      <button
+                        onClick={handleCustomRun}
+                        disabled={customLoading}
+                        className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 transition-colors"
+                      >
+                        {customLoading ? "Running..." : "Run"}
+                      </button>
+                    </div>
+                    {/* Image area */}
+                    {customLoading ? (
+                      <div className="bg-gray-50 rounded-lg h-[calc(100vh-560px)] flex flex-col items-center justify-center gap-4">
+                        <div className="relative w-14 h-14 flex items-center justify-center">
+                          <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-blue-200 border-r-blue-200 animate-spin" style={{ animationDuration: "3s" }} />
+                          <div className="absolute inset-[5px] rounded-full border-2 border-transparent border-t-blue-400 border-l-blue-400 animate-spin" style={{ animationDuration: "1.5s", animationDirection: "reverse" }} />
+                          <div className="absolute inset-[10px] rounded-full border-2 border-transparent border-t-blue-600 animate-spin" style={{ animationDuration: "0.75s" }} />
+                          <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                        </div>
+                        <p className="text-xs text-gray-400">Applying parameters...</p>
+                      </div>
+                    ) : customResult?.visualization_url ? (
+                      <div className="bg-gray-50 rounded-lg overflow-hidden relative group flex-1">
+                        <img src={customResult.visualization_url} alt="Custom XAI" className="w-full max-h-[calc(100vh-560px)] object-contain cursor-zoom-in" onClick={() => setZoomSrc(customResult.visualization_url)} />
                         <a
                           href={customResult.visualization_url}
                           download={buildDownloadName(customParams, optResult.explainer_name)}
-                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 rounded-md px-2 py-1 text-[10px] text-gray-600 hover:text-gray-900 shadow-sm flex items-center gap-1"
+                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 rounded-md px-2 py-1 text-xs text-gray-600 hover:text-gray-900 shadow-sm flex items-center gap-1"
                         >
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                           Download
                         </a>
                       </div>
                     ) : (
-                      <div className="bg-gray-50 rounded-lg h-48 flex items-center justify-center text-xs text-gray-400">
-                        Adjust parameters and click &quot;Run&quot; to see XAI result
+                      <div className="bg-gray-50 rounded-lg h-[calc(100vh-560px)] flex items-center justify-center text-xs text-gray-400">
+                        Adjust parameters and click &quot;Run&quot; to see result
                       </div>
                     )}
-                    <div className="grid grid-cols-2 divide-x divide-gray-100 border border-gray-100 rounded-lg overflow-hidden">
-                      <div className="p-2 space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[10px] font-semibold text-gray-500">PARAMETERS</p>
-                          <button
-                            onClick={handleCustomRun}
-                            disabled={customLoading}
-                            className="px-2 py-0.5 rounded text-[10px] font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 transition-colors"
-                          >
-                            {customLoading ? "Running..." : "Run"}
-                          </button>
-                        </div>
+                    {/* Parameters + Metrics — pinned to bottom */}
+                    <div className="grid items-stretch divide-x divide-gray-100 border border-gray-100 rounded-lg overflow-hidden" style={{ gridTemplateColumns: "2fr 3fr" }}>
+                      <div className="p-2">
+                        <p className="text-xs font-semibold text-gray-500 mb-1">PARAMETERS</p>
+                        <div className="space-y-0.5">
                         {(optResult.available_params || []).length === 0 && (
-                          <p className="text-[10px] text-gray-400 italic">None</p>
+                          <p className="text-xs text-gray-400 italic">None</p>
                         )}
                         {(optResult.available_params || []).map((p) => (
                           <div key={p.name} className="flex items-center gap-2">
-                            <label className="text-[10px] text-gray-500 flex-1 truncate" title={p.name}>{p.name}</label>
+                            <label className="text-xs text-gray-500 flex-1 truncate" title={p.name}>{p.name}</label>
                             <input
                               type={p.type === "int" || p.type === "float" ? "number" : "text"}
                               step={p.type === "float" ? "0.01" : p.type === "int" ? "1" : undefined}
@@ -596,22 +689,23 @@ export default function OptimizerPage() {
                                 const val = p.type === "int" ? parseInt(e.target.value) : p.type === "float" ? parseFloat(e.target.value) : e.target.value;
                                 setCustomParams((prev) => ({ ...prev, [p.name]: val }));
                               }}
-                              className="w-16 flex-shrink-0 rounded border border-gray-300 px-2 py-0.5 text-xs font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                              className="w-24 flex-shrink-0 rounded border border-gray-300 px-2 py-0.5 text-xs font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
                         ))}
                         {customError && (
-                          <div className="bg-red-50 border border-red-200 rounded-lg px-2 py-1.5 text-[10px] text-red-700 leading-snug">
+                          <div className="bg-red-50 border border-red-200 rounded-lg px-2 py-1.5 text-xs text-red-700 leading-snug">
                             {customError}
                           </div>
                         )}
+                        </div>
                       </div>
                       <div className="p-2">
-                        <p className="text-[10px] font-semibold text-gray-500 mb-1">METRICS</p>
+                        <p className="text-xs font-semibold text-gray-500 mb-1">METRICS</p>
                         {customResult ? (
                           <MetricDisplay metrics={customResult.metrics} taskType={optResult.task} />
                         ) : (
-                          <p className="text-[10px] text-gray-400">Run to see metrics</p>
+                          <p className="text-xs text-gray-400">Run to see metrics</p>
                         )}
                       </div>
                     </div>

@@ -124,7 +124,7 @@ export default function SampleDataSelector({ task, model, onSampleSelect, disabl
             >
               {/* Preview */}
               {task === "image" && previews[s.name] && (
-                <img src={previews[s.name]} alt={s.name} className="w-full h-16 object-cover rounded mb-1.5" />
+                <img src={previews[s.name]} alt={s.name} className="w-full h-16 object-contain rounded mb-1.5" />
               )}
               {task === "text" && previews[s.name] && (
                 <div className="w-full h-16 overflow-hidden rounded bg-gray-50 border border-gray-100 p-1.5 mb-1.5 text-[9px] text-gray-500 leading-tight">

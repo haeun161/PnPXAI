@@ -33,26 +33,10 @@ function getMetricValues(r: ExplainerResult, task: TaskType): MetricMap {
   };
 }
 
-function computeMinMax(completed: ExplainerResult[], task: TaskType): Record<string, { min: number; max: number }> {
-  const keys = ["faithfulness", "sensitivity", "complexity"];
-  const bounds: Record<string, { min: number; max: number }> = {};
-  for (const key of keys) {
-    const vals = completed
-      .map((r) => getMetricValues(r, task)[key])
-      .filter((v): v is number => v != null);
-    bounds[key] = {
-      min: vals.length > 0 ? Math.min(...vals) : 0,
-      max: vals.length > 0 ? Math.max(...vals) : 1,
-    };
-  }
-  return bounds;
-}
-
 function getRankScore(
   r: ExplainerResult,
   weights: Record<string, number>,
   task: TaskType,
-  bounds: Record<string, { min: number; max: number }>
 ): number {
   const values = getMetricValues(r, task);
   let sum = 0, total = 0;
@@ -60,9 +44,7 @@ function getRankScore(
     if (w <= 0) continue;
     const val = values[key] ?? null;
     if (val == null) continue;
-    const { min, max } = bounds[key] ?? { min: 0, max: 1 };
-    const normalized = max > min ? (val - min) / (max - min) : 1;
-    sum += normalized * w;
+    sum += val * w;
     total += w;
   }
   return total > 0 ? sum / total : 0;
@@ -70,8 +52,7 @@ function getRankScore(
 
 function rerank(results: ExplainerResult[], weights: Record<string, number>, task: TaskType): ExplainerResult[] {
   const completed = results.filter((r) => r.status === "completed").map((r) => ({ ...r }));
-  const bounds = computeMinMax(completed, task);
-  completed.sort((a, b) => getRankScore(b, weights, task, bounds) - getRankScore(a, weights, task, bounds));
+  completed.sort((a, b) => getRankScore(b, weights, task) - getRankScore(a, weights, task));
   completed.forEach((r, i) => { r.rank = i + 1; });
   return [...completed, results.filter((r) => r.status !== "completed")].flat();
 }
@@ -123,7 +104,7 @@ function WeightControls({ metricWeights, onWeightChange, onResetWeights }: Weigh
               onClick={() => { if (!isLast) onWeightChange(key, active ? 0 : 1); }}
               disabled={isLast}
               title={isLast ? "At least one metric required" : undefined}
-              className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-all ${
+              className={`flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-all ${
                 active
                   ? isLast
                     ? "bg-blue-50 border-blue-200 text-blue-400 cursor-not-allowed"
@@ -132,6 +113,9 @@ function WeightControls({ metricWeights, onWeightChange, onResetWeights }: Weigh
               }`}
             >
               {label}
+              <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 19V5M5 12l7-7 7 7" />
+              </svg>
             </button>
           );
         })}
@@ -242,32 +226,38 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
     ? "weighted avg"
     : activeMetrics.map((m) => METRIC_DISPLAY[m] ?? m).join(", ");
 
-  if (results.length === 0) {
-    return (
-      <div>
-        <ProgressIndicator job={job} loading={loading} />
-        {!loading && (
-          <div className="text-center py-12 text-gray-400">
-            <svg className="mx-auto h-12 w-12 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            <p className="text-sm">Results will appear here after analysis</p>
-          </div>
-        )}
-      </div>
-    );
-  }
+  // Only show completed/failed/not_supported as real cards — pending ones are not yet visible
+  const visibleResults = results
+    .filter((r) => !hiddenExplainers.includes(r.explainer_name))
+    .filter((r) => r.status === "completed" || r.status === "failed" || r.status === "not_supported");
 
-  const rankedResults = rerank(results, metricWeights, task)
-    .filter((r) => r.status !== "failed")
-    .filter((r) => !hiddenExplainers.includes(r.explainer_name));
+  // Show a single placeholder for the currently running (or first pending) explainer
+  const currentExplainerName = loading
+    ? (results.find((r) => r.status === "running") ?? results.find((r) => r.status === "pending"))?.explainer_name
+    : undefined;
+  const currentPlaceholder: ExplainerResult[] = currentExplainerName && !hiddenExplainers.includes(currentExplainerName)
+    ? [{
+        explainer_name: currentExplainerName,
+        display_name: currentExplainerName,
+        status: "pending" as const,
+        rank: null, visualization_url: null,
+        mu_fidelity: null, abpc: null, sensitivity: null, complexity: null,
+        not_supported_reason: null, error_message: null,
+        token_attributions: null, current_step: null,
+      }]
+    : [];
+
+  const rankedResults = [
+    ...rerank(visibleResults, metricWeights, task).filter((r) => r.status !== "failed"),
+    ...currentPlaceholder,
+  ];
 
   if (expanded) {
     return (
       <div className="fixed inset-0 z-50 bg-white overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between z-10">
           <h3 className="text-base font-semibold text-gray-800">
-            Attribution Results
+            Explanation Results
             <span className="font-normal text-gray-400 ml-1 text-sm">(ranked by {rankLabel})</span>
           </h3>
           <div className="flex items-center gap-4">
@@ -287,11 +277,12 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
             </button>
           </div>
         </div>
-        <div className="p-6">
-          <div className="mb-4"><ProgressIndicator job={job} loading={loading} /></div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            {rankedResults.map((r) => (
-              <ResultCard key={r.explainer_name} result={r} task={task} activeMetrics={activeMetrics} modelName={job?.model_name} dataUrl={job?.original_data_url} />
+          <div className="p-6 overflow-y-auto" style={{ height: "calc(100vh - 61px)" }}>
+          <div className="grid grid-cols-5 gap-3" style={{ gridAutoRows: "calc((100vh - 61px - 48px - 16px) / 2)" }}>
+            {rankedResults.map((r, i) => (
+              <div key={r.explainer_name} className="animate-card-in h-full" style={{ animationDelay: `${i * 60}ms` }}>
+                <ResultCard result={r} task={task} activeMetrics={activeMetrics} metricWeights={metricWeights} modelName={job?.model_name} dataUrl={job?.original_data_url} isExpanded />
+              </div>
             ))}
           </div>
         </div>
@@ -299,13 +290,15 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
     );
   }
 
+  const cardContainerClass = task === "text" ? "h-[490px]" : task === "timeseries" ? "flex-1 min-h-0" : "h-[485px]";
+  const cardWidth = task === "timeseries" ? "calc((100% - 0.75rem) / 2)" : "calc((100% - 2.25rem) / 4)";
+
   return (
     <div className={`flex flex-col${className ? ` ${className}` : ""}`}>
       <ProgressIndicator job={job} loading={loading} />
       <div className={`flex items-center justify-between mb-2 ${loading || job ? "mt-3" : ""}`}>
         <h3 className="text-sm font-semibold text-gray-700">
-          Attribution Results
-          <span className="font-normal text-gray-400 ml-1">(ranked by {rankLabel})</span>
+          Explanation Results
         </h3>
         <button
           onClick={() => setExpanded(true)}
@@ -317,10 +310,10 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
           Expand ({rankedResults.length})
         </button>
       </div>
-      <div className={`flex gap-3 overflow-x-auto pb-2 ${task === "text" ? "h-[490px]" : task === "timeseries" ? "flex-1 min-h-0" : "h-100"}`}>
-        {rankedResults.map((r) => (
-          <div key={r.explainer_name} className="flex-shrink-0 h-full" style={{ width: task === "timeseries" ? "calc((100% - 0.75rem) / 2)" : "calc((100% - 2.25rem) / 4)" }}>
-            <ResultCard result={r} task={task} activeMetrics={activeMetrics} modelName={job?.model_name} dataUrl={job?.original_data_url} />
+      <div className={`flex gap-3 overflow-x-auto pb-2 ${cardContainerClass}`}>
+        {rankedResults.map((r, i) => (
+          <div key={r.explainer_name} className="animate-card-in flex-shrink-0 h-full" style={{ width: cardWidth, animationDelay: `${i * 60}ms` }}>
+            <ResultCard result={r} task={task} activeMetrics={activeMetrics} metricWeights={metricWeights} modelName={job?.model_name} dataUrl={job?.original_data_url} />
           </div>
         ))}
       </div>

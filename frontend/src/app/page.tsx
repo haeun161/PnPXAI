@@ -1,17 +1,15 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TaskType } from "@/lib/types";
 import TaskSelector from "@/components/TaskSelector";
 import DataInput from "@/components/DataInput";
 import ModelSelector from "@/components/ModelSelector";
-import ExplainerDetectionModal, { DetectionCache } from "@/components/ExplainerDetectionModal";
-import ExplainerSelector from "@/components/ExplainerSelector";
-import RankingMetricSelector from "@/components/RankingMetricSelector";
 import PredictionInfo from "@/components/PredictionInfo";
 import ResultsPanel from "@/components/ResultsPanel";
 import ControlBox from "@/components/ControlBox";
 import { useExplainJob } from "@/hooks/useExplainJob";
 import NavBar from "@/components/NavBar";
+import Toast from "@/components/Toast";
 
 function WelcomePanel() {
   return (
@@ -20,7 +18,7 @@ function WelcomePanel() {
       <h2 className="text-[1.75rem] font-bold text-gray-900 mb-4">PnPXAI: Plug-and-Play Explainable AI</h2>
       <p className="text-[1.05rem] text-gray-500 leading-relaxed max-w-3xl">
         PnPXAI is a Python package that provides a modular and easy-to-use framework for explainable artificial intelligence (XAI).
-        It allows users to apply various XAI methods to their own models and datasets, and visualize the results in an interactive and intuitive way. 
+        It allows users to apply various XAI methods to their own models and datasets, and visualize the results in an interactive and intuitive way.
         Select a task, model, and input data on the left to get started.
       </p>
     </div>
@@ -40,11 +38,12 @@ const ARCH_COLORS: Record<string, string> = {
 const DEFAULT_WEIGHTS = { faithfulness: 1, sensitivity: 1, complexity: 1 };
 const SS_KEY = "analysis_state";
 
+
 interface SavedState {
   task: TaskType | "";
   model: string;
   explainers: string[];
-  detectionCache: DetectionCache;
+  architectures: string[];
   hiddenExplainers: string[];
   metricWeights: Record<string, number>;
   jobId: string | null;
@@ -63,11 +62,8 @@ export default function Home() {
   const [inputData, setInputData] = useState<File | Blob | null>(null);
   const [model, setModel] = useState("");
   const [explainers, setExplainers] = useState<string[]>([]);
-  const [rankingMetric] = useState("average");
-  const [detectionOpen, setDetectionOpen] = useState(false);
-  const [detectionCache, setDetectionCache] = useState<DetectionCache>({
-    state: "idle", job: null, selected: [], error: null,
-  });
+  const [architectures, setArchitectures] = useState<string[]>([]);
+  const [showArchToast, setShowArchToast] = useState(false);
   const [hiddenExplainers, setHiddenExplainers] = useState<string[]>([]);
   const [metricWeights, setMetricWeights] = useState<Record<string, number>>(DEFAULT_WEIGHTS);
   const { job, loading, error, startJob, attachToJob, reset } = useExplainJob();
@@ -82,20 +78,21 @@ export default function Home() {
     setTask(saved.task);
     setModel(saved.model);
     setExplainers(saved.explainers);
-    setDetectionCache(saved.detectionCache);
+    setArchitectures(saved.architectures ?? []);
     setHiddenExplainers(saved.hiddenExplainers);
     setMetricWeights(saved.metricWeights);
     if (saved.jobId) attachToJob(saved.jobId);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+
   // Persist state whenever it changes
   useEffect(() => {
     persistState({
-      task, model, explainers, detectionCache,
+      task, model, explainers, architectures,
       hiddenExplainers, metricWeights,
       jobId: job?.job_id ?? null,
     });
-  }, [task, model, explainers, detectionCache, hiddenExplainers, metricWeights, job?.job_id]);
+  }, [task, model, explainers, architectures, hiddenExplainers, metricWeights, job?.job_id]);
 
   const handleWeightChange = (metric: string, value: number) =>
     setMetricWeights((prev) => ({ ...prev, [metric]: value }));
@@ -107,52 +104,68 @@ export default function Home() {
       prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
     );
 
-  const displayNames = useMemo(() => {
-    const map: Record<string, string> = {};
-    detectionCache.job?.results.forEach((r) => { map[r.name] = r.display_name; });
-    return map;
-  }, [detectionCache.job]);
-
-  const resetDetectionCache = () =>
-    setDetectionCache({ state: "idle", job: null, selected: [], error: null });
+  const resetAll = () => {
+    setExplainers([]);
+    setArchitectures([]);
+    reset();
+  };
 
   const handleTaskChange = (t: TaskType | "") => {
     if (t === task) return;
     setTask(t as TaskType | "");
     setModel("");
-    setExplainers([]);
     setInputData(null);
-    resetDetectionCache();
-    reset();
+    resetAll();
   };
 
-  const handleGoFromModal = (selected: string[]) => {
-    setExplainers(selected);
-    setDetectionOpen(false);
-    if (!task || !inputData || !model || selected.length === 0) return;
-    if (detectionCache.linkedJobId) {
-      attachToJob(detectionCache.linkedJobId);
-    } else {
-      startJob(task, inputData, model, selected, rankingMetric);
+  const handleExplain = async () => {
+    if (!task || !model || !inputData) return;
+    resetAll();
+    // Fetch available explainers and architecture info in parallel
+    try {
+      const [explainersRes, archRes] = await Promise.all([
+        fetch(`/api/explainers?task=${task}&model=${encodeURIComponent(model)}`),
+        fetch(`/api/recommend?task=${task}&model=${encodeURIComponent(model)}`),
+      ]);
+      const explainerList: { name: string }[] = await explainersRes.json();
+      const SELECTED = ["IntegratedGradients", "RAP", "LRPUniformEpsilon", "GuidedGradCam"];
+      const allNames = explainerList.map((e) => e.name).filter((n) => SELECTED.includes(n));
+      setExplainers(allNames);
+      startJob(task, inputData, model, allNames, "average");
+
+      const archData = await archRes.json();
+      if (archData.detected_architectures?.length) {
+        setArchitectures(archData.detected_architectures);
+        setShowArchToast(true);
+      }
+    } catch {
+      // fallback: start with empty explainer list (backend decides)
     }
   };
+
+  const busy = loading;
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       <NavBar />
+      <Toast
+        message="Model Architecture Detection Complete"
+        show={showArchToast}
+        onHide={() => setShowArchToast(false)}
+      />
 
       <main className="flex-1 overflow-hidden max-w-[1600px] w-full mx-auto px-6 py-6">
         <div className="flex gap-6 h-full items-stretch">
           {/* Left Panel */}
           <div className="w-80 flex-shrink-0 flex flex-col gap-2 overflow-y-auto">
-            <TaskSelector selected={task} onSelect={handleTaskChange} disabled={loading} />
-            <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); setExplainers([]); resetDetectionCache(); reset(); }} disabled={loading} />
-            <DataInput task={task} onDataReady={(data) => { setInputData(data); resetDetectionCache(); reset(); }} disabled={loading} />
+            <TaskSelector selected={task} onSelect={handleTaskChange} disabled={busy} />
+            <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); resetAll(); }} disabled={busy} />
+            <DataInput task={task} onDataReady={(data) => { setInputData(data); resetAll(); }} disabled={busy} />
 
             <div className="space-y-2">
               <button
-                onClick={() => setDetectionOpen(true)}
-                disabled={!task || !model || !inputData || loading}
+                onClick={handleExplain}
+                disabled={!task || !model || !inputData || busy}
                 className="w-full py-1.5 text-sm rounded-lg font-semibold text-white bg-blue-500 border-2 border-blue-500 hover:bg-blue-100 hover:border-blue-500 disabled:border-gray-200 disabled:text-gray-400 disabled:bg-white disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -162,29 +175,36 @@ export default function Home() {
                 EXPLAIN
               </button>
               {(!task || !model) && (
-                <p className="text-xs text-gray-400 text-center">Run detection to select XAI methods</p>
+                <p className="text-xs text-gray-400 text-center">Select task, model, and data to get started</p>
               )}
 
-              {detectionCache.job?.detected_architectures && detectionCache.job.detected_architectures.length > 0 && (
-                <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-gray-100 bg-gray-50 flex-wrap">
-                  <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Arch</span>
-                  {detectionCache.job.detected_architectures.map((arch) => (
-                    <span key={arch} className={`text-[11px] font-medium px-2 py-0.5 rounded-md border ${ARCH_COLORS[arch] ?? "bg-gray-100 text-gray-600 border-gray-200"}`}>
-                      {arch}
-                    </span>
-                  ))}
+              {architectures.length > 0 && (
+                <div className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50 p-3">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <svg className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18" />
+                    </svg>
+                    <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wide">Detected Architecture</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {architectures.map((arch) => (
+                      <span key={arch} className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border shadow-sm ${ARCH_COLORS[arch] ?? "bg-gray-100 text-gray-600 border-gray-200"}`}>
+                        {arch}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              {(job || loading) && explainers.length > 0 && (
+              {(job || loading) && (job?.explainer_names ?? explainers).length > 0 && (
                 <ControlBox
-                  explainers={explainers}
-                  displayNames={displayNames}
+                  explainers={job?.explainer_names ?? explainers}
+                  displayNames={{}}
                   job={job}
                   loading={loading}
                   hiddenExplainers={hiddenExplainers}
                   onToggleHidden={toggleHidden}
-                  onSetAllHidden={(hidden) => setHiddenExplainers(hidden ? [...explainers] : [])}
+                  onSetAllHidden={(hidden) => setHiddenExplainers(hidden ? [...(job?.explainer_names ?? explainers)] : [])}
                   task={task as TaskType}
                   metricWeights={metricWeights}
                   onWeightChange={handleWeightChange}
@@ -194,19 +214,9 @@ export default function Home() {
             </div>
 
             {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{error}</div>
-            )}
-
-            {detectionOpen && task && model && (
-              <ExplainerDetectionModal
-                task={task as TaskType}
-                model={model}
-                inputData={inputData}
-                cache={detectionCache}
-                onCacheChange={setDetectionCache}
-                onGo={handleGoFromModal}
-                onClose={() => setDetectionOpen(false)}
-              />
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                {error}
+              </div>
             )}
           </div>
 
@@ -228,7 +238,7 @@ export default function Home() {
                 task={job?.task ?? task as any}
                 rankingMetric={job?.ranking_metric ?? "average"}
                 job={job}
-                loading={loading}
+                loading={busy}
                 hiddenExplainers={hiddenExplainers}
                 metricWeights={metricWeights}
                 onWeightChange={handleWeightChange}

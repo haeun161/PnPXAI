@@ -1,18 +1,21 @@
 "use client";
 import { useState, useCallback, useRef } from "react";
+import Link from "next/link";
 import { ExplainerResult, TaskType } from "@/lib/types";
 
 interface Props {
   result: ExplainerResult;
   task: TaskType;
   activeMetrics: string[];
+  metricWeights?: Record<string, number>;
   modelName?: string;
   dataUrl?: string | null;
+  isExpanded?: boolean;
 }
 
 const BAR_HEIGHTS = [45, 85, 35, 100, 60, 75, 40, 90, 55, 70];
 
-export default function ResultCard({ result, task, activeMetrics, modelName, dataUrl }: Props) {
+export default function ResultCard({ result, task, activeMetrics, metricWeights = {}, modelName, dataUrl, isExpanded }: Props) {
   const [showZoom, setShowZoom] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -132,7 +135,7 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
         </div>
       )}
 
-      <div className={`relative bg-gray-50 flex-shrink-0 ${task === "text" ? "h-[380px]" : task === "timeseries" ? "flex-1 min-h-0" : "flex-1 min-h-0"}`}>
+      <div className={`relative bg-gray-50 flex-shrink-0 ${task === "text" ? "h-[380px]" : "flex-1 min-h-0"}`}>
         {result.rank != null && (
           <div className="absolute top-2 left-2 z-10 w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shadow">
             #{result.rank}
@@ -286,7 +289,7 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
 
             {/* Real step from backend */}
             <span className="text-[10px] font-mono text-blue-400 tracking-wide w-full text-center px-2">
-              {result.current_step ?? "Initializing..."}
+              {result.current_step ?? "Explaining..."}
             </span>
           </div>
         )}
@@ -296,28 +299,53 @@ export default function ResultCard({ result, task, activeMetrics, modelName, dat
         <div className="flex items-center justify-between gap-1">
           <h4 className="text-sm font-semibold text-gray-800 truncate">{result.display_name}</h4>
           {isCompleted && modelName && dataUrl && (
-            <a
-              href={`/optimizer?task=${task}&model=${encodeURIComponent(modelName)}&explainer=${encodeURIComponent(result.explainer_name)}&data_url=${encodeURIComponent(dataUrl)}`}
+            <Link
+              href={(() => {
+                const p = new URLSearchParams({
+                  task, model: modelName,
+                  explainer: result.explainer_name,
+                  data_url: dataUrl,
+                  ...(result.visualization_url ? { viz_url: result.visualization_url } : {}),
+                  ...(result.mu_fidelity != null ? { mu_fidelity: String(result.mu_fidelity) } : {}),
+                  ...(result.abpc != null ? { abpc: String(result.abpc) } : {}),
+                  ...(result.sensitivity != null ? { sensitivity: String(result.sensitivity) } : {}),
+                  ...(result.complexity != null ? { complexity: String(result.complexity) } : {}),
+                });
+                return `/optimizer?${p.toString()}`;
+              })()}
               title="Open in Optimizer"
-              className="flex-shrink-0 flex items-center gap-0.5 text-[10px] text-green-600 hover:text-green-700 border border-green-200 hover:border-green-300 rounded px-1.5 py-0.5 transition-colors"
+              prefetch={false}
+              className="flex-shrink-0 flex items-center gap-0.5 text-[10px] font-semibold text-white bg-blue-400 hover:bg-blue-300 active:translate-y-0.5 active:shadow-none rounded px-2 py-1 transition-all shadow-[0_3px_0_#3b82f6]"
             >
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               Optimize
-            </a>
+            </Link>
           )}
         </div>
         {isCompleted && (
-          <div className="mt-1.5 grid grid-cols-3 gap-x-1 text-center">
+          <div className={`flex flex-col ${isExpanded ? "mt-1 gap-0.5" : "mt-2 gap-1"}`}>
             {metrics.map((m) => {
               const isRanked = activeMetrics.includes(m.key);
+              const total = Object.values(metricWeights).reduce((s, v) => s + v, 0);
+              const pct = isRanked && metricWeights[m.key] != null && total > 0
+                ? Math.round((metricWeights[m.key] / total) * 100)
+                : null;
               return (
-                <div key={m.key} className={`py-0.5 ${isRanked ? "bg-blue-50 rounded" : ""}`}>
-                  <p className="text-[10px] text-gray-400 leading-tight">{m.label}</p>
-                  <p className="text-xs font-mono font-semibold text-gray-700 leading-tight">
-                    {m.value?.toFixed(3) ?? "N/A"}
+                <div key={m.key} className={`flex items-center justify-between rounded-lg ${isExpanded ? "px-2 py-1" : "px-2.5 py-1.5"} ${isRanked ? "bg-gray-50 border border-gray-200" : "bg-white border border-gray-100"}`}>
+                  <p className={`flex items-center gap-1 font-medium ${isRanked ? "text-gray-700" : "text-gray-400"} ${isExpanded ? "text-xs" : "text-sm"}`}>
+                    {m.label}
+                    <svg className={`w-4 h-4 flex-shrink-0 ${isRanked ? "text-gray-500" : "text-gray-300"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5M5 12l7-7 7 7" />
+                    </svg>
+                    {pct !== null && (
+                      <span className="text-[10px] text-gray-400 font-normal">{pct}%</span>
+                    )}
                   </p>
+                  <span className={`font-mono text-center py-0.5 rounded ${isExpanded ? "text-[10px] w-12" : "text-sm w-16"} ${isRanked ? "text-gray-800 font-semibold" : "text-gray-300"}`}>
+                    {m.value?.toFixed(3) ?? "—"}
+                  </span>
                 </div>
               );
             })}

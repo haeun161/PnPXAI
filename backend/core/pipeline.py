@@ -1,4 +1,5 @@
 import copy
+import io
 import os
 from typing import Optional
 import numpy as np
@@ -278,6 +279,13 @@ def run_explanation_pipeline(
 ):
     """Synchronous pipeline - runs in thread pool executor."""
     try:
+        import random
+        random.seed(42)
+        np.random.seed(42)
+        torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
+
         update_job_status(job_id, "running")
 
         handler = get_task_handler(task)
@@ -406,7 +414,13 @@ def run_explanation_pipeline(
                     active_inp = text_input_ids.clone()
                     explainer_instance = ExplainerClass(active_model, feature_mask_fn=NoMask1d())
                 elif exp_name in _STATE_MUTATING_EXPLAINERS:
-                    active_model = copy.deepcopy(explainer_model)
+                    try:
+                        buf = io.BytesIO()
+                        torch.save(explainer_model, buf)
+                        buf.seek(0)
+                        active_model = torch.load(buf, map_location="cpu", weights_only=False)
+                    except Exception:
+                        active_model = copy.deepcopy(explainer_model)
                     active_inp = input_tensor.clone() if input_tensor is not None else None
                     if active_inp is not None and active_inp.is_floating_point():
                         active_inp = active_inp.requires_grad_(True)

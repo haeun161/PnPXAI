@@ -49,7 +49,7 @@ export default function DataInput({ task, model, onDataReady, disabled }: Props)
         </div>
 
         {/* Content */}
-        <div className="bg-white p-3 max-h-36 overflow-y-auto">
+        <div className="bg-white p-3">
           {mode === "sample" && (
             <SampleDataSelector task={task} model={model} onSampleSelect={onDataReady} disabled={disabled} />
           )}

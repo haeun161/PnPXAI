@@ -3,8 +3,8 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 
 const NAV_ITEMS = [
-  { label: "Analysis", href: "/" },
-  { label: "Optimizer", href: "/optimizer" },
+  { label: "Explanation", href: "/" },
+  { label: "Optimization", href: "/optimizer" },
 ];
 
 export default function NavBar() {
@@ -16,9 +16,8 @@ export default function NavBar() {
         {/* Brand */}
         <div className="py-4 flex-shrink-0">
           <h1 className="text-xl font-bold text-gray-900">
-            PnPXAI: Plug-and-Play Explainable AI <span className="text-sm font-normal text-blue-600">v2</span>
+            PnPXAI: Plug-and-Play Explainable AI
           </h1>
-          <p className="text-sm text-gray-500">Automatic explanations across image, text, and time series</p>
         </div>
 
         {/* Nav tabs */}

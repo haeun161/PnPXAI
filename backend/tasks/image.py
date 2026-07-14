@@ -11,19 +11,19 @@ from backend.renderers.image_renderer import render_heatmap
 _IMAGE_MODELS = {
     "resnet50": {
         "display_name": "ResNet-50",
-        "architecture": "Residual Network",
+        "architecture": "",
         "description": "50-layer deep residual network, widely used in XAI research.",
         "loader": lambda: models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2),
     },
     "vgg16": {
         "display_name": "VGG-16",
-        "architecture": "Sequential CNN",
+        "architecture": "",
         "description": "16-layer sequential CNN, ideal for layer-wise XAI methods.",
         "loader": lambda: models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1),
     },
     "densenet121": {
         "display_name": "DenseNet-121",
-        "architecture": "Dense Connections",
+        "architecture": "",
         "description": "121-layer densely connected network.",
         "loader": lambda: models.densenet121(weights=models.DenseNet121_Weights.IMAGENET1K_V1),
     },
@@ -40,7 +40,7 @@ _IMAGE_EXPLAINERS = [
     {"name": "VarGrad", "display_name": "VarGrad", "estimated_time": 5},
     {"name": "GradientXInput", "display_name": "Gradient × Input", "estimated_time": 2},
     {"name": "Gradient", "display_name": "Gradient", "estimated_time": 2},
-    {"name": "LRPUniformEpsilon", "display_name": "LRP (Uniform Epsilon)", "estimated_time": 3},
+    {"name": "LRPUniformEpsilon", "display_name": "LRP", "estimated_time": 3},
     {"name": "Lime", "display_name": "LIME", "estimated_time": 25},
     {"name": "KernelShap", "display_name": "KernelSHAP", "estimated_time": 25},
     {"name": "RAP", "display_name": "RAP", "estimated_time": 5},

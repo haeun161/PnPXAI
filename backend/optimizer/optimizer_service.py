@@ -29,6 +29,9 @@ def get_explainer_params(explainer_name: str) -> list[dict]:
     sig = inspect.signature(cls.__init__)
     params = []
     skip = {"self", "model", "forward_func", "kwargs"}
+    _LRP_CLASSES = {"LRPUniformEpsilon", "LRPEpsilonPlus", "LRPEpsilonGammaBox", "LRPEpsilonAlpha2Beta1"}
+    if explainer_name in _LRP_CLASSES:
+        skip = skip | {"stabilizer", "zennit_canonizers", "forward_arg_extractor", "additional_forward_arg_extractor", "layer", "n_classes"}
     for name, param in sig.parameters.items():
         if name in skip or name.startswith("_"):
             continue
@@ -259,12 +262,27 @@ def _run_image_optimization(model_name, explainer_name, metric_name, input_data,
     # Use ImageModality directly to avoid torch.fx tracing issues with some models
     image_modality = ImageModality()
     ExplainerClass = _get_pnpxai_explainer(explainer_name)
-    explainer_inst = ExplainerClass(model=model)
+
+    # RAP/LRP mutate model weights in-place — use a fresh copy to avoid corrupting the cached model
+    _STATE_MUTATING = {"LRPUniformEpsilon", "LRPEpsilonPlus", "LRPEpsilonGammaBox", "LRPEpsilonAlpha2Beta1", "RAP"}
+    if explainer_name in _STATE_MUTATING:
+        try:
+            buf = io.BytesIO()
+            torch.save(model, buf)
+            buf.seek(0)
+            explainer_model = torch.load(buf, map_location="cpu", weights_only=False)
+        except Exception:
+            import copy
+            explainer_model = copy.deepcopy(model)
+    else:
+        explainer_model = model
+
+    explainer_inst = ExplainerClass(model=explainer_model)
 
     # For GradCam/GuidedGradCam: set target layer explicitly to avoid fx tracing
     if explainer_name in {"GradCam", "GuidedGradCam"} and hasattr(explainer_inst, "set_target_layer"):
         from backend.core.pipeline import _find_cam_target_layer
-        cam_target = _find_cam_target_layer(model)
+        cam_target = _find_cam_target_layer(explainer_model)
         if cam_target is not None:
             explainer_inst = explainer_inst.set_target_layer(cam_target)
 

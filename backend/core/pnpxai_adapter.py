@@ -23,8 +23,8 @@ def normalize_attribution(attribution, task: str = "image") -> np.ndarray:
 
     # Aggregate depending on task
     if attr_np.ndim == 3:
-        # Image (C, H, W) -> (H, W): mean over channels
-        attr_np = np.mean(np.abs(attr_np), axis=0)
+        # Image (C, H, W) -> (H, W): L2 norm across channels avoids sign cancellation
+        attr_np = np.linalg.norm(attr_np, axis=0)
     elif attr_np.ndim == 2:
         if task == "timeseries":
             # Time-series (channels, seq_len): keep as-is for per-channel attribution
@@ -37,9 +37,10 @@ def normalize_attribution(attribution, task: str = "image") -> np.ndarray:
     else:
         attr_np = np.abs(attr_np)
 
-    attr_max = attr_np.max()
-    if attr_max > 0:
-        attr_np = attr_np / attr_max
+    # Normalize to [-1, 1] preserving sign (or [0, 1] for unsigned)
+    abs_max = np.abs(attr_np).max()
+    if abs_max > 0:
+        attr_np = attr_np / abs_max
 
     return attr_np
 

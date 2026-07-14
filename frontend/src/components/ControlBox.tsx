@@ -38,9 +38,9 @@ export default function ControlBox({
   const resultMap = new Map<string, ExplainerResult>();
   job?.results.forEach((r) => resultMap.set(r.explainer_name, r));
 
-  const completedCount = job?.results.filter((r) => r.status === "completed").length ?? 0;
   const total = explainers.length;
-  const allHidden = explainers.length > 0 && explainers.every((n) => hiddenExplainers.includes(n));
+  const visibleCount = total - explainers.filter((n) => hiddenExplainers.includes(n)).length;
+  const allHidden = total > 0 && explainers.every((n) => hiddenExplainers.includes(n));
 
   const [gearOpen, setGearOpen] = useState(false);
   const gearRef = useRef<HTMLDivElement>(null);
@@ -69,7 +69,7 @@ export default function ControlBox({
             {allHidden ? "Show all" : "Hide all"}
           </button>
           <span className={`text-[10px] font-medium tabular-nums ${loading ? "text-blue-600" : "text-gray-400"}`}>
-            {completedCount}/{total}
+            {visibleCount}/{total}
           </span>
         </div>
       </div>
@@ -237,7 +237,7 @@ export default function ControlBox({
                     onClick={() => { if (!isLast) onWeightChange(key, active ? 0 : 1); }}
                     disabled={isLast}
                     title={isLast ? "At least one metric required" : undefined}
-                    className={`flex-1 text-[10px] font-semibold py-1.5 rounded-lg border transition-all ${
+                    className={`flex-1 flex items-center justify-center gap-0.5 text-[10px] font-semibold py-1.5 rounded-lg border transition-all ${
                       active
                         ? isLast
                           ? "bg-blue-50 border-blue-200 text-blue-400 cursor-not-allowed"
@@ -246,6 +246,9 @@ export default function ControlBox({
                     }`}
                   >
                     {label}
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5M5 12l7-7 7 7" />
+                    </svg>
                   </button>
                 );
               })}
