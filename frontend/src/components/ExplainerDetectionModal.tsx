@@ -229,7 +229,7 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-      onClick={onClose}
+      onClick={state === "running" ? undefined : onClose}
     >
       <div
         className="bg-white rounded-2xl shadow-2xl w-[600px] flex flex-col overflow-hidden"
@@ -249,7 +249,7 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
               <p className="text-xs text-gray-400">Evaluate and rank all compatible XAI methods</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+          <button onClick={onClose} disabled={state === "running"} className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
