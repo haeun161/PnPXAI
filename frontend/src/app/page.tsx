@@ -153,8 +153,7 @@ export default function Home() {
         fetch(`/api/recommend?task=${task}&model=${encodeURIComponent(model)}`),
       ]);
       const explainerList: { name: string }[] = await explainersRes.json();
-      const SELECTED = ["IntegratedGradients", "RAP", "LRPUniformEpsilon", "GuidedGradCam"];
-      const allNames = explainerList.map((e) => e.name).filter((n) => SELECTED.includes(n));
+      const allNames = explainerList.map((e) => e.name);
       setExplainers(allNames);
       startJob(task, inputData, model, allNames, "average");
 
