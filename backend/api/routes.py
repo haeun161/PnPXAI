@@ -131,24 +131,25 @@ def _has_unregistered_attention(model_obj) -> bool:
 
 @router.get("/recommend")
 async def recommend_explainers(task: str = Query(...), model: str = Query(...)):
-    from pnpxai.core.recommender.recommender import XaiRecommender, CAM_BASED_EXPLAINERS
+    from backend.core import explainer_catalog
     try:
         handler = get_task_handler(task)
         loop = asyncio.get_running_loop()
         model_obj = await loop.run_in_executor(None, handler.load_model, model)
         modality = handler.get_modality()
-        output = await loop.run_in_executor(None, XaiRecommender().recommend, modality, model_obj)
-        explainers = output.explainers
+        cache_key = f"{task}:{model}"
 
-        # pnpxai's detector only knows nn.MultiheadAttention and a few HF types.
-        # For models like HuggingFace ViT/Swin/DeiT/CLIP whose attention classes
-        # are not registered, we detect by class name and remove CAM-based methods.
-        if _has_unregistered_attention(model_obj):
-            explainers = [e for e in explainers if e not in CAM_BASED_EXPLAINERS]
+        # Detection is shared (and cached) with /explainers via explainer_catalog, so a
+        # /explain click firing both requests in parallel only pays for it once.
+        def _detect():
+            return (
+                explainer_catalog.detect_recommended_names(model_obj, modality, cache_key=cache_key),
+                explainer_catalog.detect_architectures(model_obj, modality, cache_key=cache_key),
+            )
+        recommended_names, detected_arch_names = await loop.run_in_executor(None, _detect)
 
-        recommended_names = [e.__name__ for e in explainers]
         available_names = {e["name"] for e in handler.get_explainers(model) if e.get("compatible", True)}
-        detected_arch_names = sorted([a.__name__ for a in output.detected_architectures])
+        recommended_names = recommended_names or []
         return {
             "recommended": [n for n in recommended_names if n in available_names],
             "detected_architectures": detected_arch_names,
@@ -171,12 +172,16 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
     )
     from backend.core.pnpxai_adapter import normalize_attribution, extract_metric_value
 
+    from backend.core.device import begin_job, end_job
+
     job = _detect_rank_jobs[job_id]
 
     # Allocate linked explain job upfront so the frontend can poll it after GO
     explain_job_id = str(uuid.uuid4())
     job["linked_job_id"] = explain_job_id
 
+    begin_job()  # paired with end_job() below (keeps the GPU offloader from pulling
+    # this model mid-computation while a concurrent /explain job finishes)
     try:
         handler = get_task_handler(task)
         model = handler.load_model(model_name)
@@ -370,6 +375,8 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
         job["status"] = "error"
         job["error"] = str(e)
         update_job_status(explain_job_id, "failed", str(e))
+    finally:
+        end_job()
 
 
 @router.post("/detect-rank")

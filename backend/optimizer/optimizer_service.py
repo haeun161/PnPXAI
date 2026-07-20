@@ -531,17 +531,25 @@ def _run_timeseries_optimization(model_name, explainer_name, metric_name, input_
 
 
 def run_optimization(task, model_name, explainer_name, metric_name, input_data, n_trials=20):
-    if task == "image":
-        return _run_image_optimization(model_name, explainer_name, metric_name, input_data, n_trials)
-    elif task == "text":
-        return _run_text_optimization(model_name, explainer_name, metric_name, input_data, n_trials)
-    elif task == "timeseries":
-        return _run_timeseries_optimization(model_name, explainer_name, metric_name, input_data, n_trials)
-    else:
-        return {"error": f"Unsupported task: {task}"}
+    from backend.core.device import begin_job, end_job
+    begin_job()  # keeps the GPU offloader from pulling the model mid-computation
+    # while a concurrent /explain job finishes (see backend/core/device.py)
+    try:
+        if task == "image":
+            return _run_image_optimization(model_name, explainer_name, metric_name, input_data, n_trials)
+        elif task == "text":
+            return _run_text_optimization(model_name, explainer_name, metric_name, input_data, n_trials)
+        elif task == "timeseries":
+            return _run_timeseries_optimization(model_name, explainer_name, metric_name, input_data, n_trials)
+        else:
+            return {"error": f"Unsupported task: {task}"}
+    finally:
+        end_job()
 
 
 def run_with_custom_params(task, model_name, explainer_name, custom_params, input_data):
+    from backend.core.device import begin_job, end_job
+
     available = get_explainer_params(explainer_name)
     type_map = {p["name"]: p["type"] for p in available}
     typed_params = {}
@@ -559,7 +567,12 @@ def run_with_custom_params(task, model_name, explainer_name, custom_params, inpu
         except (ValueError, TypeError):
             typed_params[k] = v
 
-    result = _run_explainer_with_params(task, model_name, explainer_name, input_data, typed_params)
+    begin_job()  # keeps the GPU offloader from pulling the model mid-computation
+    # while a concurrent /explain job finishes (see backend/core/device.py)
+    try:
+        result = _run_explainer_with_params(task, model_name, explainer_name, input_data, typed_params)
+    finally:
+        end_job()
     if result is None:
         return {"error": f"Failed to run with custom params"}
 

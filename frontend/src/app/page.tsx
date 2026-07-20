@@ -68,6 +68,10 @@ export default function Home() {
   const [showArchToast, setShowArchToast] = useState(false);
   const [hiddenExplainers, setHiddenExplainers] = useState<string[]>([]);
   const [metricWeights, setMetricWeights] = useState<Record<string, number>>(DEFAULT_WEIGHTS);
+  // True from the moment EXPLAIN is clicked until startJob() takes over via `loading` —
+  // covers the /explainers + /recommend round-trip so the button reacts immediately
+  // instead of appearing dead while detection runs.
+  const [starting, setStarting] = useState(false);
   const { job, loading, error, startJob, attachToJob, reset } = useExplainJob();
 
   // Restore state on mount (returning from Optimizer)
@@ -134,6 +138,7 @@ export default function Home() {
 
   const handleExplain = async () => {
     if (!task || !model || !inputData) return;
+    setStarting(true);
     resetAll();
     // Fetch available explainers and architecture info in parallel
     try {
@@ -154,10 +159,12 @@ export default function Home() {
       }
     } catch {
       // fallback: start with empty explainer list (backend decides)
+    } finally {
+      setStarting(false);
     }
   };
 
-  const busy = loading;
+  const busy = loading || starting;
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">

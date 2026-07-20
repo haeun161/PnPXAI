@@ -33,8 +33,11 @@ _META = {
 _DEFAULT_TIME = 5
 _DEFAULT_ORDER = 50
 
-# Cache detection results per model so the /explainers endpoint stays fast.
-_cache: dict[str, list[dict]] = {}
+# Cache raw pnpxai detection per model, keyed the same way for both the /explainers
+# and /recommend endpoints, so a given (task, model) only ever runs XaiRecommender's
+# detection once — it involves a model load + a full architecture walk, so re-running
+# it per endpoint made every /explain click pay for it twice.
+_cache: dict[str, dict] = {}
 
 
 def _entry(name: str) -> dict:
@@ -70,6 +73,31 @@ def has_unregistered_attention(model) -> bool:
     )
 
 
+def _detect_raw(model, modality, cache_key: Optional[str]) -> dict:
+    """Run (or reuse a cached) pnpxai XaiRecommender detection for (model, modality).
+
+    Returns {"explainer_names": [...] | None, "detected_architectures": [...]}.
+    `explainer_names` is None if detection failed, so callers can fall back.
+    """
+    if cache_key and cache_key in _cache:
+        return _cache[cache_key]
+    try:
+        from pnpxai.core.recommender.recommender import XaiRecommender, CAM_BASED_EXPLAINERS
+        output = XaiRecommender().recommend(modality, model)
+        explainers = list(output.explainers)
+        if has_unregistered_attention(model):
+            explainers = [e for e in explainers if e not in CAM_BASED_EXPLAINERS]
+        result = {
+            "explainer_names": [cls.__name__ for cls in explainers],
+            "detected_architectures": sorted(a.__name__ for a in output.detected_architectures),
+        }
+    except Exception:
+        result = {"explainer_names": None, "detected_architectures": []}
+    if cache_key:
+        _cache[cache_key] = result
+    return result
+
+
 def detect_explainers(model, modality, cache_key: Optional[str] = None,
                       exclude: Optional[set] = None) -> list[dict]:
     """Return the pnpxai-detected compatible explainers for (model, modality) as UI dicts.
@@ -79,23 +107,22 @@ def detect_explainers(model, modality, cache_key: Optional[str] = None,
     1D-conv & MOMENT time-series models all fail at runtime). `exclude` drops those
     known-incompatible names so the list is exactly what actually runs ("되는 애들만").
     """
-    if cache_key and cache_key in _cache:
-        return _cache[cache_key]
     exclude = exclude or set()
-    try:
-        from pnpxai.core.recommender.recommender import XaiRecommender, CAM_BASED_EXPLAINERS
-        output = XaiRecommender().recommend(modality, model)
-        explainers = list(output.explainers)
-        if has_unregistered_attention(model):
-            explainers = [e for e in explainers if e not in CAM_BASED_EXPLAINERS]
-        result = sorted(
-            (_entry(cls.__name__) for cls in explainers if cls.__name__ not in exclude),
-            key=_order,
-        )
-        if not result:
-            result = [e for e in _fallback() if e["name"] not in exclude]
-    except Exception:
-        result = [e for e in _fallback() if e["name"] not in exclude]
-    if cache_key:
-        _cache[cache_key] = result
-    return result
+    names = _detect_raw(model, modality, cache_key)["explainer_names"]
+    if names is None:
+        return [e for e in _fallback() if e["name"] not in exclude]
+    result = sorted(
+        (_entry(n) for n in names if n not in exclude),
+        key=_order,
+    )
+    return result or [e for e in _fallback() if e["name"] not in exclude]
+
+
+def detect_architectures(model, modality, cache_key: Optional[str] = None) -> list[str]:
+    """Return the sorted architecture class names pnpxai detected for (model, modality)."""
+    return _detect_raw(model, modality, cache_key)["detected_architectures"]
+
+
+def detect_recommended_names(model, modality, cache_key: Optional[str] = None) -> Optional[list[str]]:
+    """Return the raw (pre-exclude) pnpxai-recommended explainer class names, or None on failure."""
+    return _detect_raw(model, modality, cache_key)["explainer_names"]
