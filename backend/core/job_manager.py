@@ -107,6 +107,20 @@ def update_result_step(job_id: str, explainer_name: str, step: str):
                     break
 
 
+def rank_completed_results(results: list[dict], ranking_metric: str) -> None:
+    """Sort completed results by ranking_metric and assign r["rank"] in place."""
+    def _score(r):
+        if ranking_metric == "average":
+            vals = [r.get(k) for k in ["mu_fidelity", "sensitivity", "complexity"] if r.get(k) is not None]
+            return sum(vals) / len(vals) if vals else 0
+        return r.get(ranking_metric, 0) or 0
+
+    completed = [r for r in results if r["status"] == "completed"]
+    completed.sort(key=_score, reverse=True)
+    for i, r in enumerate(completed):
+        r["rank"] = i + 1
+
+
 def update_job_result(job_id: str, result: dict):
     """Append or replace a result. No sorting - ranking is done in pipeline.py."""
     with _lock:

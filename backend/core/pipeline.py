@@ -9,7 +9,7 @@ from backend.tasks import get_task_handler
 from backend.core.pnpxai_adapter import normalize_attribution, extract_metric_value
 from backend.core.job_manager import (
     get_uploaded_data, update_job_status, update_job_predictions,
-    update_job_result, update_result_step, VISUALIZATION_DIR,
+    update_job_result, update_result_step, rank_completed_results, VISUALIZATION_DIR,
 )
 
 def _sliding_window_attribution(explainer_instance, input_tensor, target_tensor, window_size=512, stride=None):
@@ -51,7 +51,7 @@ def _sliding_window_attribution(explainer_instance, input_tensor, target_tensor,
         if isinstance(w_attr, torch.Tensor):
             attr_sum[..., s:s + window_size] += w_attr.detach()
         else:
-            attr_sum[..., s:s + window_size] += torch.tensor(w_attr)
+            attr_sum[..., s:s + window_size] += torch.as_tensor(w_attr, device=attr_sum.device)
         attr_count[..., s:s + window_size] += 1
 
     # Average overlapping regions
@@ -175,6 +175,8 @@ def _get_pnpxai_metric(name: str, model, explainer_instance=None):
 
 def _run_image_inference(model, input_tensor, hf_label_map=None):
     """Run image classification inference, return (target_class, predictions, input_tensor)."""
+    from backend.core.device import model_device
+    input_tensor = input_tensor.to(model_device(model))
     model.eval()
     with torch.no_grad():
         output = model(input_tensor)
@@ -235,8 +237,9 @@ class _TextInputIdsWrapper(torch.nn.Module):
 
 def _run_text_inference(handler, model, raw_text, model_name):
     """Run text classification inference. Returns wrapper model + embeddings for XAI."""
+    from backend.core.device import model_device
     encoded, tokens = handler.tokenize(raw_text, model_name)
-    input_ids = encoded["input_ids"]
+    input_ids = encoded["input_ids"].to(model_device(model))
 
     model.eval()
     with torch.no_grad():
@@ -278,6 +281,8 @@ def run_explanation_pipeline(
     params: dict,
 ):
     """Synchronous pipeline - runs in thread pool executor."""
+    from backend.core.device import begin_job, end_job
+    begin_job()  # paired with end_job() in the finally below (frees GPU when idle)
     try:
         import random
         random.seed(42)
@@ -336,6 +341,8 @@ def run_explanation_pipeline(
 
                 model = handler.load_model(model_name, num_input_channels=data_channels)
                 explainer_model = model
+                from backend.core.device import model_device
+                input_tensor = input_tensor.to(model_device(model))
 
                 # Run inference for prediction display
                 model.eval()
@@ -408,17 +415,19 @@ def run_explanation_pipeline(
                 # which would poison the shared cached model for all subsequent explainers.
                 _STATE_MUTATING_EXPLAINERS = {"LRPUniformEpsilon", "LRPEpsilonPlus",
                                               "LRPEpsilonGammaBox", "LRPEpsilonAlpha2Beta1", "RAP"}
+                from backend.core.device import model_device
                 if task == "text" and exp_name in _GRADIENT_FREE_TEXT_EXPLAINERS:
                     from pnpxai.explainers.utils.feature_masks import NoMask1d
                     active_model = _TextInputIdsWrapper(model)
                     active_inp = text_input_ids.clone()
                     explainer_instance = ExplainerClass(active_model, feature_mask_fn=NoMask1d())
                 elif exp_name in _STATE_MUTATING_EXPLAINERS:
+                    _dev = model_device(explainer_model)
                     try:
                         buf = io.BytesIO()
                         torch.save(explainer_model, buf)
                         buf.seek(0)
-                        active_model = torch.load(buf, map_location="cpu", weights_only=False)
+                        active_model = torch.load(buf, map_location=_dev, weights_only=False)
                     except Exception:
                         active_model = copy.deepcopy(explainer_model)
                     active_inp = input_tensor.clone() if input_tensor is not None else None
@@ -448,7 +457,8 @@ def run_explanation_pipeline(
 
                 # Compute attribution
                 update_result_step(job_id, exp_name, attribution_step)
-                target_tensor = torch.tensor([target_class], dtype=torch.long)
+                _target_dev = active_inp.device if active_inp is not None else model_device(active_model)
+                target_tensor = torch.tensor([target_class], dtype=torch.long, device=_target_dev)
                 if active_inp is not None:
                     # Use sliding window for large timeseries
                     ts_window_size = params.get("window_size", 512)
@@ -537,18 +547,11 @@ def run_explanation_pipeline(
                 all_results.append(result_entry)
                 update_job_result(job_id, result_entry)
 
-        # Rank results
-        def _rank_score(r):
-            if ranking_metric == "average":
-                vals = [r.get(k) for k in ["mu_fidelity", "sensitivity", "complexity"] if r.get(k) is not None]
-                return sum(vals) / len(vals) if vals else 0
-            return r.get(ranking_metric, 0) or 0
-
-        completed = [r for r in all_results if r["status"] == "completed"]
-        completed.sort(key=_rank_score, reverse=True)
-        for i, r in enumerate(completed):
-            r["rank"] = i + 1
-            update_job_result(job_id, r)
+        # Rank results (shared with the precomputed-cache path)
+        rank_completed_results(all_results, ranking_metric)
+        for r in all_results:
+            if r["status"] == "completed":
+                update_job_result(job_id, r)
 
         update_job_status(job_id, "completed")
 
@@ -556,3 +559,6 @@ def run_explanation_pipeline(
         import traceback
         traceback.print_exc()
         update_job_status(job_id, "failed", str(e))
+    finally:
+        # Release GPU memory once no other job is in flight.
+        end_job()

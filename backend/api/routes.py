@@ -13,6 +13,7 @@ from backend.core.job_manager import (
     update_job_status, update_job_predictions, update_job_result,
 )
 from backend.core.pipeline import run_explanation_pipeline
+from backend.core import precompute_cache
 from backend.optimizer.optimizer_service import (
     get_explainer_params, run_optimization, run_with_custom_params,
     save_history, get_history, get_history_record, load_record_input_data,
@@ -42,7 +43,10 @@ async def get_models(task: str = Query(...)):
 async def get_explainers(task: str = Query(...), model: Optional[str] = Query(None)):
     handler = get_task_handler(task)
     model_name = model or (handler.get_models()[0]["name"] if handler.get_models() else "")
-    return [ExplainerInfo(**e) for e in handler.get_explainers(model_name)]
+    # get_explainers now loads the model + runs pnpxai detection; keep it off the event loop.
+    loop = asyncio.get_running_loop()
+    explainers = await loop.run_in_executor(None, handler.get_explainers, model_name)
+    return [ExplainerInfo(**e) for e in explainers]
 
 
 @router.post("/explain")
@@ -91,9 +95,28 @@ async def explain(
     store_uploaded_data(job_id, data, task)
     create_job(job_id, task, model_name, names, ranking_metric)
 
-    # Run pipeline in thread pool executor
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, run_explanation_pipeline, job_id, task, model_name, names, ranking_metric, {})
+
+    # Serve from cache if this is one of our own sample files with precomputed results.
+    # The cached entry must also match the current cache version and model weights,
+    # otherwise we fall through and recompute.
+    file_hash = precompute_cache.file_sha256(contents)
+    cached = precompute_cache.get_precomputed(task, file_hash, model_name)
+    model_fp = None
+    if cached:
+        # Loading a model can be slow (MOMENT-large is GBs) — keep it off the event loop.
+        def _fp():
+            try:
+                return precompute_cache.model_fingerprint(handler.load_model(model_name))
+            except Exception:
+                return None
+        model_fp = await loop.run_in_executor(None, _fp)
+    if precompute_cache.is_fully_cached(cached, names, model_fp):
+        loop.run_in_executor(None, precompute_cache.serve_precomputed,
+                             job_id, task, model_name, file_hash, names, ranking_metric, cached)
+    else:
+        loop.run_in_executor(None, run_explanation_pipeline,
+                             job_id, task, model_name, names, ranking_metric, {})
 
     return {"job_id": job_id}
 

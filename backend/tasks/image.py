@@ -6,45 +6,52 @@ from PIL import Image
 
 from backend.tasks.base import TaskHandler
 from backend.core.image_utils import preprocess_image, get_original_image_array
+from backend.core.model_paths import local_file
 from backend.renderers.image_renderer import render_heatmap
+
+# (torchvision constructor, pretrained weights enum) per builtin model.
+_IMAGE_BUILDERS = {
+    "resnet50": (models.resnet50, models.ResNet50_Weights.IMAGENET1K_V2),
+    "vgg16": (models.vgg16, models.VGG16_Weights.IMAGENET1K_V1),
+    "densenet121": (models.densenet121, models.DenseNet121_Weights.IMAGENET1K_V1),
+}
+
+
+def _load_builtin_image_model(name: str) -> torch.nn.Module:
+    """Prefer a locally-saved state_dict (models/image/<name>.pth); else download
+    the torchvision ImageNet weights."""
+    ctor, weights = _IMAGE_BUILDERS[name]
+    path = local_file("image", f"{name}.pth")
+    if path.exists():
+        model = ctor(weights=None)
+        model.load_state_dict(torch.load(path, map_location="cpu"))
+        return model
+    return ctor(weights=weights)
+
 
 _IMAGE_MODELS = {
     "resnet50": {
         "display_name": "ResNet-50",
         "architecture": "",
         "description": "50-layer deep residual network, widely used in XAI research.",
-        "loader": lambda: models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2),
+        "loader": lambda: _load_builtin_image_model("resnet50"),
     },
     "vgg16": {
         "display_name": "VGG-16",
         "architecture": "",
         "description": "16-layer sequential CNN, ideal for layer-wise XAI methods.",
-        "loader": lambda: models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1),
+        "loader": lambda: _load_builtin_image_model("vgg16"),
     },
     "densenet121": {
         "display_name": "DenseNet-121",
         "architecture": "",
         "description": "121-layer densely connected network.",
-        "loader": lambda: models.densenet121(weights=models.DenseNet121_Weights.IMAGENET1K_V1),
+        "loader": lambda: _load_builtin_image_model("densenet121"),
     },
 }
 
 _loaded_models: dict[str, torch.nn.Module] = {}
 _hf_image_cache: dict[str, dict] = {}
-
-_IMAGE_EXPLAINERS = [
-    {"name": "IntegratedGradients", "display_name": "Integrated Gradients", "estimated_time": 5},
-    {"name": "GradCam", "display_name": "Grad-CAM", "estimated_time": 3},
-    {"name": "GuidedGradCam", "display_name": "Guided Grad-CAM", "estimated_time": 3},
-    {"name": "SmoothGrad", "display_name": "SmoothGrad", "estimated_time": 5},
-    {"name": "VarGrad", "display_name": "VarGrad", "estimated_time": 5},
-    {"name": "GradientXInput", "display_name": "Gradient × Input", "estimated_time": 2},
-    {"name": "Gradient", "display_name": "Gradient", "estimated_time": 2},
-    {"name": "LRPUniformEpsilon", "display_name": "LRP", "estimated_time": 3},
-    {"name": "Lime", "display_name": "LIME", "estimated_time": 25},
-    {"name": "KernelShap", "display_name": "KernelSHAP", "estimated_time": 25},
-    {"name": "RAP", "display_name": "RAP", "estimated_time": 5},
-]
 
 
 class _HFImageWrapper(torch.nn.Module):
@@ -251,26 +258,32 @@ class ImageTaskHandler(TaskHandler):
             for name, info in _IMAGE_MODELS.items()
         ]
 
+    # pnpxai detection recommends these per architecture, but they fail at runtime on
+    # specific models. DenseNet's concatenating dense blocks break zennit's LRP rules
+    # ("size of tensor a (32) must match tensor b (96)") and RAP has no rule for
+    # adaptive_avg_pool2d. Verified across all image samples via precompute_samples.
+    _MODEL_UNSUPPORTED = {
+        "densenet121": {"LRPUniformEpsilon", "LRPEpsilonPlus", "LRPEpsilonGammaBox",
+                        "LRPEpsilonAlpha2Beta1", "RAP"},
+    }
+
     def get_explainers(self, model_name: str) -> list[dict]:
-        return [
-            {
-                "name": e["name"],
-                "display_name": e["display_name"],
-                "estimated_compute_time_seconds": e["estimated_time"],
-                "compatible": True,
-                "incompatibility_reason": None,
-            }
-            for e in _IMAGE_EXPLAINERS
-        ]
+        # Detection-driven, minus known-incompatible methods, so the list == what actually runs.
+        from backend.core.explainer_catalog import detect_explainers
+        model = self.load_model(model_name)
+        return detect_explainers(model, self.get_modality(),
+                                 cache_key=f"image:{model_name}",
+                                 exclude=self._MODEL_UNSUPPORTED.get(model_name, set()))
 
     def load_model(self, model_name: str) -> torch.nn.Module:
+        from backend.core.device import to_device
         if model_name not in _IMAGE_MODELS:
-            return _load_hf_image_model(model_name)["wrapper"]
+            return to_device(_load_hf_image_model(model_name)["wrapper"])
         if model_name not in _loaded_models:
             model = _IMAGE_MODELS[model_name]["loader"]()
             model.eval()
             _loaded_models[model_name] = model
-        return _loaded_models[model_name]
+        return to_device(_loaded_models[model_name])
 
     def get_hf_label_map(self, model_name: str) -> dict:
         if model_name not in _IMAGE_MODELS:
