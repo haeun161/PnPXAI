@@ -6,9 +6,10 @@ import time
 import inspect
 import uuid
 import io
+import copy
 import torch
 import numpy as np
-from typing import Any
+from typing import Any, Optional
 from PIL import Image
 
 from backend.tasks import get_task_handler
@@ -18,6 +19,23 @@ HISTORY_DIR = os.path.join("backend", "optimizer", "history")
 DATA_DIR = os.path.join("backend", "optimizer", "data")
 VISUALIZATION_DIR = os.path.join("backend", "heatmaps")
 MAX_HISTORY = 5
+
+# RAP/LRP mutate model weights in-place (zennit's canonizer fuses BatchNorm into Conv
+# destructively) — instantiating them with the shared cached model corrupts it for every
+# other explainer/request that reuses that model. Give these a private deep copy instead.
+_STATE_MUTATING_EXPLAINERS = {"LRPUniformEpsilon", "LRPEpsilonPlus", "LRPEpsilonGammaBox", "LRPEpsilonAlpha2Beta1", "RAP"}
+
+
+def _explainer_model_for(explainer_name: str, model):
+    if explainer_name not in _STATE_MUTATING_EXPLAINERS:
+        return model
+    try:
+        buf = io.BytesIO()
+        torch.save(model, buf)
+        buf.seek(0)
+        return torch.load(buf, map_location="cpu", weights_only=False)
+    except Exception:
+        return copy.deepcopy(model)
 
 
 def get_explainer_params(explainer_name: str) -> list[dict]:
@@ -93,7 +111,7 @@ def _run_explainer_with_params(task, model_name, explainer_name, input_data, cus
     if task == "image":
         input_processed = handler.preprocess_input(input_data)
         target_class, predictions, input_tensor = _run_image_inference(model, input_processed)
-        explainer_model = model
+        explainer_model = _explainer_model_for(explainer_name, model)
         tokens = None
     elif task == "text":
         from backend.core.pipeline import _TextInputIdsWrapper
@@ -103,7 +121,7 @@ def _run_explainer_with_params(task, model_name, explainer_name, input_data, cus
             explainer_model = _TextInputIdsWrapper(model)
             input_tensor = _input_ids.clone()
         else:
-            explainer_model = wrapper
+            explainer_model = _explainer_model_for(explainer_name, wrapper)
     elif task == "timeseries":
         proc = handler.preprocess_input(input_data)
         tokens = None
@@ -116,13 +134,13 @@ def _run_explainer_with_params(task, model_name, explainer_name, input_data, cus
                 out = model(ts_tensor)
             target_class = int(out.argmax(dim=1).item())
             input_tensor = ts_tensor
-            explainer_model = model
+            explainer_model = _explainer_model_for(explainer_name, model)
             # Override viz_input for render_result
             tokens = proc  # pass dict with tensor + col_names
         else:
             input_tensor = proc if isinstance(proc, torch.Tensor) else None
             target_class = 0
-            explainer_model = model
+            explainer_model = _explainer_model_for(explainer_name, model)
         predictions = [{"class_name": f"class_{target_class}", "probability": 100.0}]
     else:
         return None
@@ -263,19 +281,7 @@ def _run_image_optimization(model_name, explainer_name, metric_name, input_data,
     image_modality = ImageModality()
     ExplainerClass = _get_pnpxai_explainer(explainer_name)
 
-    # RAP/LRP mutate model weights in-place — use a fresh copy to avoid corrupting the cached model
-    _STATE_MUTATING = {"LRPUniformEpsilon", "LRPEpsilonPlus", "LRPEpsilonGammaBox", "LRPEpsilonAlpha2Beta1", "RAP"}
-    if explainer_name in _STATE_MUTATING:
-        try:
-            buf = io.BytesIO()
-            torch.save(model, buf)
-            buf.seek(0)
-            explainer_model = torch.load(buf, map_location="cpu", weights_only=False)
-        except Exception:
-            import copy
-            explainer_model = copy.deepcopy(model)
-    else:
-        explainer_model = model
+    explainer_model = _explainer_model_for(explainer_name, model)
 
     explainer_inst = ExplainerClass(model=explainer_model)
 
@@ -389,7 +395,7 @@ def _run_text_optimization(model_name, explainer_name, metric_name, input_data, 
 
     text_modality = TextModality()
     ExplainerClass = _get_pnpxai_explainer(explainer_name)
-    default_explainer = ExplainerClass(wrapper_model)
+    default_explainer = ExplainerClass(_explainer_model_for(explainer_name, wrapper_model))
 
     postprocessors = text_modality.get_default_postprocessors()
     default_postprocessor = postprocessors[0]
@@ -489,7 +495,7 @@ def _run_timeseries_optimization(model_name, explainer_name, metric_name, input_
     predictions = [{"class_name": f"class_{target_class}", "probability": 100.0}]
 
     ExplainerClass = _get_pnpxai_explainer(explainer_name)
-    explainer_inst = ExplainerClass(model)
+    explainer_inst = ExplainerClass(_explainer_model_for(explainer_name, model))
 
     inp = ts_tensor.clone().requires_grad_(True) if ts_tensor is not None else None
     if inp is not None:
@@ -637,3 +643,10 @@ def delete_history_record(record_id: str) -> bool:
 
 def load_record_input_data(record_id: str, task: str) -> Any:
     return _load_input_data(record_id, task)
+
+
+def get_input_data_path(record_id: str, task: str) -> Optional[str]:
+    """Path to the saved input file for a history record, or None if missing."""
+    ext = {"image": ".png", "text": ".txt"}.get(task, ".bin")
+    path = os.path.join(DATA_DIR, f"{record_id}{ext}")
+    return path if os.path.exists(path) else None

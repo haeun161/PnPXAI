@@ -20,7 +20,7 @@ def render_heatmap(
 
     fig, ax = plt.subplots(1, 1, figsize=(4, 4), dpi=100)
     if is_unsigned:
-        ax.imshow(attribution_map, cmap="Reds", vmin=0, vmax=limit)
+        ax.imshow(attribution_map, cmap=colormap, vmin=0, vmax=limit)
     else:
         ax.imshow(attribution_map, cmap=colormap, vmin=-limit, vmax=limit)
     ax.axis("off")

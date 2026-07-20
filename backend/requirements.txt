@@ -10,5 +10,6 @@ python-multipart>=0.0.6
 pandas>=2.0
 openpyxl>=3.1
 transformers>=4.36
+soxr
 scikit-learn>=1.3
 momentfm>=0.1

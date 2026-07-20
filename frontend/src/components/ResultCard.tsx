@@ -2,6 +2,7 @@
 import { useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { ExplainerResult, TaskType } from "@/lib/types";
+import RetryImage from "./RetryImage";
 
 interface Props {
   result: ExplainerResult;
@@ -117,7 +118,7 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
-          <img
+          <RetryImage
             src={zoomUrl}
             alt={result.display_name}
             onMouseDown={handleMouseDown}
@@ -166,7 +167,7 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
               onMouseLeave={() => { cardDragRef.current = null; }}
               style={{ cursor: cardZoom > 1 ? (cardDragRef.current ? "grabbing" : "grab") : "zoom-in" }}
             >
-              <img
+              <RetryImage
                 src={result.visualization_url}
                 alt={result.display_name}
                 className="w-full h-full object-contain"

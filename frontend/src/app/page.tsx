@@ -10,17 +10,19 @@ import ControlBox from "@/components/ControlBox";
 import { useExplainJob } from "@/hooks/useExplainJob";
 import NavBar from "@/components/NavBar";
 import Toast from "@/components/Toast";
+import { setOptimizerHandoff } from "@/lib/optimizerHandoff";
 
 function WelcomePanel() {
   return (
     <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-8 -mt-[60px]">
       <img src="/pnpxai_logo.png" alt="PnPXAI Logo" className="w-[410px] mb-10 select-none" draggable={false} />
-      <h2 className="text-[1.75rem] font-bold text-gray-900 mb-4">PnPXAI: Plug-and-Play Explainable AI</h2>
-      <p className="text-[1.05rem] text-gray-500 leading-relaxed max-w-3xl">
-        PnPXAI is a Python package that provides a modular and easy-to-use framework for explainable artificial intelligence (XAI).
-        It allows users to apply various XAI methods to their own models and datasets, and visualize the results in an interactive and intuitive way.
-        Select a task, model, and input data on the left to get started.
-      </p>
+      <h2 className="text-[1.75rem] font-bold text-gray-900 mb-4">AI 모델이 어떤 근거로 예측했는지 확인해보세요</h2>
+      <ol className="text-[1.05rem] text-gray-500 leading-relaxed max-w-2xl text-left list-decimal list-inside space-y-1.5 mb-4">
+        <li>분석할 데이터 유형(이미지 / 텍스트 / 시계열)을 선택하세요</li>
+        <li>분석에 사용할 모델을 선택하세요</li>
+        <li>데이터를 업로드하면, 다양한 설명 기법(XAI)이 예측 근거를 시각화해줍니다</li>
+      </ol>
+      <p className="text-[1.05rem] text-gray-500">왼쪽에서 시작해보세요.</p>
     </div>
   );
 }
@@ -94,6 +96,18 @@ export default function Home() {
     });
   }, [task, model, explainers, architectures, hiddenExplainers, metricWeights, job?.job_id]);
 
+  // Keep the Optimizer hand-off in sync so clicking "Optimize" on a ResultCard
+  // carries over the actual uploaded file + predictions in memory, instead of
+  // the Optimizer page having to re-fetch them from the (possibly gone) job.
+  useEffect(() => {
+    if (!inputData || !job?.original_data_url) return;
+    setOptimizerHandoff({
+      dataUrl: job.original_data_url,
+      file: inputData,
+      predictions: job.predictions ?? null,
+    });
+  }, [inputData, job?.original_data_url, job?.predictions]);
+
   const handleWeightChange = (metric: string, value: number) =>
     setMetricWeights((prev) => ({ ...prev, [metric]: value }));
 
@@ -159,8 +173,8 @@ export default function Home() {
           {/* Left Panel */}
           <div className="w-80 flex-shrink-0 flex flex-col gap-2 overflow-y-auto">
             <TaskSelector selected={task} onSelect={handleTaskChange} disabled={busy} />
-            <ModelSelector task={task} selected={model} onSelect={(m) => { setModel(m); resetAll(); }} disabled={busy} />
-            <DataInput task={task} onDataReady={(data) => { setInputData(data); resetAll(); }} disabled={busy} />
+            <ModelSelector task={task} selected={model} onSelect={(m) => setModel(m)} disabled={busy} />
+            <DataInput task={task} onDataReady={(data) => setInputData(data)} disabled={busy} />
 
             <div className="space-y-2">
               <button

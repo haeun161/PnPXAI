@@ -7,6 +7,7 @@ import DataInput from "@/components/DataInput";
 import { getExplainers } from "@/lib/api";
 import NavBar from "@/components/NavBar";
 import PredictionInfo from "@/components/PredictionInfo";
+import { getOptimizerHandoff } from "@/lib/optimizerHandoff";
 
 const BASE = "/api";
 
@@ -168,8 +169,19 @@ export default function OptimizerPage() {
 
     // If we have an existing viz_url from ResultCard, display it immediately without running optimization
     if (vizUrl && t && m && e) {
-      // Fetch predictions from job API if dataUrl contains a job_id
-      if (dataUrl) {
+      // Prefer the in-memory hand-off from the Explanation page (same-tab click-through) —
+      // carries the actual file + predictions over without depending on the job still
+      // being alive on the backend. Falls back to re-fetching only if it's missing
+      // (page reload, link opened in a new tab, etc.).
+      const handoff = getOptimizerHandoff();
+      const handoffMatches = handoff && dataUrl && handoff.dataUrl === dataUrl;
+
+      if (handoffMatches) {
+        setInputFile(handoff!.file);
+        if (t === "image") setInputPreview(URL.createObjectURL(handoff!.file));
+        if (handoff!.predictions) setSourcePredictions(handoff!.predictions);
+      } else if (dataUrl) {
+        // Fetch predictions from job API if dataUrl contains a job_id
         const jobIdMatch = dataUrl.match(/\/api\/jobs\/([^/]+)\//);
         if (jobIdMatch) {
           fetch(`${BASE}/jobs/${jobIdMatch[1]}`)
@@ -224,14 +236,20 @@ export default function OptimizerPage() {
             visualization_url: vizUrl,
           });
         });
-      // Still fetch the file in background so user can run custom optimization later
-      fetch(dataUrl ?? vizUrl)
-        .then((r) => r.blob())
-        .then((blob) => {
-          setInputFile(blob);
-          if (t === "image") setInputPreview(URL.createObjectURL(blob));
-        })
-        .catch(console.error);
+      // No hand-off available (page reload, link opened in a new tab, ...) — fall
+      // back to fetching the file from the backend so custom optimization still works.
+      if (!handoffMatches) {
+        fetch(dataUrl ?? vizUrl)
+          .then((r) => r.blob())
+          .then((blob) => {
+            setInputFile(blob);
+            if (t === "image") setInputPreview(URL.createObjectURL(blob));
+          })
+          .catch((err) => {
+            console.error(err);
+            setError("원본 데이터를 불러오지 못했습니다. 백엔드 서버가 켜져 있는지 확인 후 새로고침해 주세요.");
+          });
+      }
       return;
     }
 
@@ -245,7 +263,11 @@ export default function OptimizerPage() {
           setInputFile(blob);
           if (t === "image") setInputPreview(URL.createObjectURL(blob));
         })
-        .catch(console.error);
+        .catch((err) => {
+          console.error(err);
+          autoRunRef.current = false;
+          setError("원본 데이터를 불러오지 못했습니다. 백엔드 서버가 켜져 있는지 확인 후 새로고침해 주세요.");
+        });
     }
   }, []);
 
@@ -287,6 +309,8 @@ export default function OptimizerPage() {
     setOptResult(null);
     setCustomResult(null);
     setRestoredRecordId(null);
+    setSourceDataUrl(null);
+    setSourcePredictions(null);
   };
 
   const handleOptimize = async () => {
@@ -296,6 +320,8 @@ export default function OptimizerPage() {
     setOptResult(null);
     setCustomResult(null);
     setRestoredRecordId(null);
+    setSourceDataUrl(null);
+    setSourcePredictions(null);
 
     const formData = new FormData();
     formData.append("file", inputFile);
@@ -347,7 +373,10 @@ export default function OptimizerPage() {
     }
 
     // Normal flow with uploaded file
-    if (!inputFile) return;
+    if (!inputFile) {
+      setCustomError("원본 데이터를 아직 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
+      return;
+    }
     setCustomLoading(true);
     const formData = new FormData();
     formData.append("file", inputFile);
@@ -385,6 +414,8 @@ export default function OptimizerPage() {
     setTask(record.task as TaskType);
     setModel(record.model_name);
     setExplainer(record.explainer_name);
+    setSourceDataUrl(`${BASE}/optimizer/history/${record.record_id}/input`);
+    setSourcePredictions(record.predictions ?? null);
     setOptResult({
       record_id: record.record_id,
       task: record.task,
@@ -573,7 +604,7 @@ export default function OptimizerPage() {
             {optResult && (
               <div className="space-y-4">
                 <PredictionInfo
-                  dataUrl={sourceDataUrl ?? inputPreview}
+                  dataUrl={inputPreview ?? sourceDataUrl}
                   predictions={sourcePredictions ?? optResult.predictions}
                   task={optResult.task as TaskType}
                 />

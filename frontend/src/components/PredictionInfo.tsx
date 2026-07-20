@@ -1,6 +1,7 @@
 "use client";
 import { PredictionItem, TaskType } from "@/lib/types";
 import { useEffect, useState } from "react";
+import RetryImage from "./RetryImage";
 
 interface Props {
   dataUrl: string | null;
@@ -23,7 +24,7 @@ export default function PredictionInfo({ dataUrl, predictions, task }: Props) {
       <div className="flex gap-4">
         {/* Original data display */}
         {task === "image" && dataUrl && (
-          <img src={dataUrl} alt="Original" className="max-h-40 rounded-lg object-contain border" />
+          <RetryImage src={dataUrl} alt="Original" className="max-h-40 w-40 flex-shrink-0 rounded-lg object-contain border" />
         )}
         {task === "text" && (
           <div className="max-h-40 w-56 overflow-y-auto rounded-lg border bg-gray-50 p-2.5 text-sm text-gray-800 flex-shrink-0">

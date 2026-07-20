@@ -5,7 +5,7 @@ from typing import Any, Optional
 from PIL import Image
 
 from backend.tasks.base import TaskHandler
-from backend.core.image_utils import preprocess_image, get_original_image_array
+from backend.core.image_utils import preprocess_image
 from backend.renderers.image_renderer import render_heatmap
 
 _IMAGE_MODELS = {
@@ -291,8 +291,4 @@ class ImageTaskHandler(TaskHandler):
         return ImageModality()
 
     def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str) -> str:
-        if isinstance(input_data, Image.Image):
-            original_array = get_original_image_array(input_data)
-        else:
-            original_array = None
         return render_heatmap(attribution, output_path)

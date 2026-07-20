@@ -1,6 +1,7 @@
 import copy
 import io
 import os
+import threading
 from typing import Optional
 import numpy as np
 import torch
@@ -9,8 +10,18 @@ from backend.tasks import get_task_handler
 from backend.core.pnpxai_adapter import normalize_attribution, extract_metric_value
 from backend.core.job_manager import (
     get_uploaded_data, update_job_status, update_job_predictions,
-    update_job_result, update_result_step, VISUALIZATION_DIR,
+    update_job_result, update_result_step, VISUALIZATION_DIR, rank_completed_results,
 )
+
+_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Explainers install forward/backward hooks on cached model instances (_loaded_models
+# in tasks/*.py) and LRP/RAP mutate a copy of that shared model in-place. Running two
+# jobs concurrently (each in its own executor thread) races on that shared state and
+# on GPU memory, causing sporadic, random-looking failures across different explainers.
+# Serializing pipeline runs avoids this at the cost of queuing concurrent requests.
+_PIPELINE_LOCK = threading.Lock()
+
 
 def _sliding_window_attribution(explainer_instance, input_tensor, target_tensor, window_size=512, stride=None):
     """Compute attribution via sliding windows for large time-series.
@@ -233,10 +244,11 @@ class _TextInputIdsWrapper(torch.nn.Module):
         return logits
 
 
-def _run_text_inference(handler, model, raw_text, model_name):
+def _run_text_inference(handler, model, raw_text, model_name, device=None):
     """Run text classification inference. Returns wrapper model + embeddings for XAI."""
+    device = device or next(model.parameters()).device
     encoded, tokens = handler.tokenize(raw_text, model_name)
-    input_ids = encoded["input_ids"]
+    input_ids = encoded["input_ids"].to(device)
 
     model.eval()
     with torch.no_grad():
@@ -277,7 +289,23 @@ def run_explanation_pipeline(
     ranking_metric: str,
     params: dict,
 ):
-    """Synchronous pipeline - runs in thread pool executor."""
+    """Synchronous pipeline - runs in thread pool executor.
+
+    Serialized via _PIPELINE_LOCK — see comment on its definition. Jobs queued
+    behind another run just stay in "pending" status until the lock is free.
+    """
+    with _PIPELINE_LOCK:
+        _run_explanation_pipeline(job_id, task, model_name, explainer_names, ranking_metric, params)
+
+
+def _run_explanation_pipeline(
+    job_id: str,
+    task: str,
+    model_name: str,
+    explainer_names: list[str],
+    ranking_metric: str,
+    params: dict,
+):
     try:
         import random
         random.seed(42)
@@ -289,7 +317,7 @@ def run_explanation_pipeline(
         update_job_status(job_id, "running")
 
         handler = get_task_handler(task)
-        model = handler.load_model(model_name)
+        model = handler.load_model(model_name).to(_DEVICE)
 
         # (No HF-model flag needed — target layer is set explicitly for all image models.)
 
@@ -304,19 +332,21 @@ def run_explanation_pipeline(
         explainer_model = model  # model used for explainer (may be wrapper for text)
         if task == "image":
             input_data = handler.preprocess_input(raw_data, model_name)
+            if isinstance(input_data, torch.Tensor):
+                input_data = input_data.to(_DEVICE)
             hf_label_map = getattr(handler, "get_hf_label_map", lambda m: {})(model_name)
             target_class, predictions, input_tensor = _run_image_inference(model, input_data, hf_label_map)
             update_job_predictions(job_id, predictions)
         elif task == "text":
             text = raw_data if isinstance(raw_data, str) else str(raw_data)
-            target_class, predictions, input_tensor, text_input_ids, tokens_for_viz, wrapper_model = _run_text_inference(handler, model, text, model_name)
+            target_class, predictions, input_tensor, text_input_ids, tokens_for_viz, wrapper_model = _run_text_inference(handler, model, text, model_name, device=_DEVICE)
             explainer_model = wrapper_model  # use embedding wrapper for XAI
             update_job_predictions(job_id, predictions)
         else:
             input_data = handler.preprocess_input(raw_data)
             # Time-series returns {"tensor": ..., "col_names": ...}
             if isinstance(input_data, dict) and "tensor" in input_data:
-                input_tensor = input_data["tensor"]
+                input_tensor = input_data["tensor"].to(_DEVICE)
                 data_channels = input_tensor.shape[1]
 
                 # Check model-data channel compatibility
@@ -334,7 +364,7 @@ def run_explanation_pipeline(
                     )
                     return
 
-                model = handler.load_model(model_name, num_input_channels=data_channels)
+                model = handler.load_model(model_name, num_input_channels=data_channels).to(_DEVICE)
                 explainer_model = model
 
                 # Run inference for prediction display
@@ -365,7 +395,7 @@ def run_explanation_pipeline(
                 predictions.sort(key=lambda x: x["probability"], reverse=True)
                 update_job_predictions(job_id, predictions)
             else:
-                input_tensor = input_data if isinstance(input_data, torch.Tensor) else None
+                input_tensor = input_data.to(_DEVICE) if isinstance(input_data, torch.Tensor) else None
                 target_class = 0
 
         # For each explainer: attribution + metrics + visualization
@@ -418,7 +448,7 @@ def run_explanation_pipeline(
                         buf = io.BytesIO()
                         torch.save(explainer_model, buf)
                         buf.seek(0)
-                        active_model = torch.load(buf, map_location="cpu", weights_only=False)
+                        active_model = torch.load(buf, map_location=_DEVICE, weights_only=False)
                     except Exception:
                         active_model = copy.deepcopy(explainer_model)
                     active_inp = input_tensor.clone() if input_tensor is not None else None
@@ -448,7 +478,7 @@ def run_explanation_pipeline(
 
                 # Compute attribution
                 update_result_step(job_id, exp_name, attribution_step)
-                target_tensor = torch.tensor([target_class], dtype=torch.long)
+                target_tensor = torch.tensor([target_class], dtype=torch.long, device=_DEVICE)
                 if active_inp is not None:
                     # Use sliding window for large timeseries
                     ts_window_size = params.get("window_size", 512)
@@ -538,17 +568,10 @@ def run_explanation_pipeline(
                 update_job_result(job_id, result_entry)
 
         # Rank results
-        def _rank_score(r):
-            if ranking_metric == "average":
-                vals = [r.get(k) for k in ["mu_fidelity", "sensitivity", "complexity"] if r.get(k) is not None]
-                return sum(vals) / len(vals) if vals else 0
-            return r.get(ranking_metric, 0) or 0
-
-        completed = [r for r in all_results if r["status"] == "completed"]
-        completed.sort(key=_rank_score, reverse=True)
-        for i, r in enumerate(completed):
-            r["rank"] = i + 1
-            update_job_result(job_id, r)
+        rank_completed_results(all_results, ranking_metric)
+        for r in all_results:
+            if r["status"] == "completed":
+                update_job_result(job_id, r)
 
         update_job_status(job_id, "completed")
 
