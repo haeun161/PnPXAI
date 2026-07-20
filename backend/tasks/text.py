@@ -3,7 +3,16 @@ import numpy as np
 from typing import Any
 
 from backend.tasks.base import TaskHandler
+from backend.core.model_paths import local_dir
 from backend.renderers.text_renderer import render_text_attribution
+
+
+def _resolve_text_source(model_name: str, hf_id: str):
+    """Return (path_or_hf_id, local_files_only) preferring a locally-saved model."""
+    d = local_dir("text", model_name)
+    if d.exists():
+        return str(d), True
+    return hf_id, False
 
 _TEXT_MODELS = {
     "distilbert-sst2": {
@@ -15,15 +24,6 @@ _TEXT_MODELS = {
         "label_map": {0: "NEGATIVE", 1: "POSITIVE"},
     },
 }
-
-_TEXT_EXPLAINERS = [
-    {"name": "IntegratedGradients", "display_name": "Integrated Gradients", "estimated_time": 5},
-    {"name": "Lime", "display_name": "LIME", "estimated_time": 25},
-    {"name": "KernelShap", "display_name": "KernelSHAP", "estimated_time": 25},
-    {"name": "SmoothGrad", "display_name": "SmoothGrad", "estimated_time": 5},
-    {"name": "GradientXInput", "display_name": "Gradient × Input", "estimated_time": 3},
-    {"name": "Gradient", "display_name": "Gradient", "estimated_time": 2},
-]
 
 _loaded_models: dict[str, Any] = {}
 _loaded_tokenizers: dict[str, Any] = {}
@@ -38,7 +38,8 @@ def _get_tokenizer(model_name: str):
     if model_name not in _loaded_tokenizers:
         from transformers import AutoTokenizer
         hf_id = _TEXT_MODELS[model_name]["hf_id"]
-        _loaded_tokenizers[model_name] = AutoTokenizer.from_pretrained(hf_id)
+        src, local_only = _resolve_text_source(model_name, hf_id)
+        _loaded_tokenizers[model_name] = AutoTokenizer.from_pretrained(src, local_files_only=local_only)
     return _loaded_tokenizers[model_name]
 
 
@@ -71,23 +72,23 @@ class TextTaskHandler(TaskHandler):
         ]
 
     def get_explainers(self, model_name: str) -> list[dict]:
-        return [
-            {"name": e["name"], "display_name": e["display_name"],
-             "estimated_compute_time_seconds": e["estimated_time"],
-             "compatible": True, "incompatibility_reason": None}
-            for e in _TEXT_EXPLAINERS
-        ]
+        # Detection-driven: expose exactly what pnpxai recommends for this model.
+        from backend.core.explainer_catalog import detect_explainers
+        model = self.load_model(model_name)
+        return detect_explainers(model, self.get_modality(), cache_key=f"text:{model_name}")
 
     def load_model(self, model_name: str) -> torch.nn.Module:
+        from backend.core.device import to_device
         if not _is_preset(model_name):
-            return _load_hf_text_model(model_name)["model"]
+            return to_device(_load_hf_text_model(model_name)["model"])
         if model_name not in _loaded_models:
             from transformers import AutoModelForSequenceClassification
             hf_id = _TEXT_MODELS[model_name]["hf_id"]
-            model = AutoModelForSequenceClassification.from_pretrained(hf_id)
+            src, local_only = _resolve_text_source(model_name, hf_id)
+            model = AutoModelForSequenceClassification.from_pretrained(src, local_files_only=local_only)
             model.eval()
             _loaded_models[model_name] = model
-        return _loaded_models[model_name]
+        return to_device(_loaded_models[model_name])
 
     def get_label_map(self, model_name: str) -> dict:
         if not _is_preset(model_name):

@@ -1,15 +1,21 @@
 """Precompute XAI results for every (built-in sample file x built-in model x
-compatible explainer) combination, so the live /explain endpoint can serve an
+detected explainer) combination, so the live /explain endpoint can serve an
 identical request from backend/precomputed/ instantly instead of recomputing.
 
-Run from the project root:
-    python -m backend.scripts.precompute_samples [task ...]
+Run from the project root (inside the container):
+    python -m backend.scripts.precompute_samples [task ...] [--force]
 
-With no arguments, precomputes image, text, and timeseries. Pass one or more
-task names to limit the run (e.g. `python -m backend.scripts.precompute_samples image`).
+With no arguments it precomputes **image and text only** — the time-series models have
+no trained classifier yet, so caching their output isn't meaningful. Pass task names
+explicitly to override:
+    python -m backend.scripts.precompute_samples timeseries
 
-Safe to re-run: each combination is skipped if already present in the manifest
-unless --force is passed.
+Safe to re-run: a combination is skipped only if it is already cached AND still valid —
+each entry records the CACHE_VERSION and a fingerprint of the model's weights, so
+changing a model (retrain / re-architect / re-init) or bumping CACHE_VERSION makes stale
+entries recompute automatically. `--force` recomputes regardless.
+
+Requires sample_data/ to be present (it is git-ignored) and the models available.
 """
 import glob
 import json
@@ -24,10 +30,17 @@ from backend.core.job_manager import (
 )
 from backend.core.pipeline import run_explanation_pipeline
 from backend.core.image_utils import load_and_validate_image
-from backend.core.precompute_cache import PRECOMPUTED_DIR, MANIFEST_PATH, file_sha256, sample_cache_dir
+from backend.core.precompute_cache import (
+    PRECOMPUTED_DIR, MANIFEST_PATH, file_sha256, sample_cache_dir,
+    model_fingerprint, CACHE_VERSION,
+)
 
 SAMPLE_ROOT = "sample_data"
-TASKS = ["image", "text", "timeseries"]
+# Time-series is excluded by default: its models have no trained classifier yet
+# (Simple-CNN/InceptionTime are fully random, MOMENT's classification head is random),
+# so caching their output isn't meaningful. Re-enable once trained models land.
+DEFAULT_TASKS = ["image", "text"]
+ALL_TASKS = ["image", "text", "timeseries"]
 
 
 def _sample_files(task: str) -> list[str]:
@@ -88,15 +101,24 @@ def precompute(tasks: list[str], force: bool = False) -> None:
 
             for model_info in handler.get_models():
                 model_name = model_info["name"]
-                explainers = [e for e in handler.get_explainers(model_name) if e.get("compatible", True)]
-                explainer_names = [e["name"] for e in explainers]
+                # Detection-driven list — same set the UI offers, so a cached hit is exact.
+                explainer_names = [
+                    e["name"] for e in handler.get_explainers(model_name)
+                    if e.get("compatible", True)
+                ]
                 if not explainer_names:
                     continue
+
+                # Fingerprint the actual weights so the entry self-invalidates if the
+                # model changes later (retrained / re-architected / re-initialized).
+                model_fp = model_fingerprint(handler.load_model(model_name))
 
                 existing = manifest.get(task, {}).get(file_hash, {}).get(model_name)
                 if existing and not force:
                     have = {r["explainer_name"] for r in existing.get("results", [])}
-                    if have >= set(explainer_names):
+                    still_valid = (existing.get("cache_version") == CACHE_VERSION
+                                   and existing.get("model_fp") == model_fp)
+                    if still_valid and have >= set(explainer_names):
                         skipped += 1
                         continue
 
@@ -123,6 +145,8 @@ def precompute(tasks: list[str], force: bool = False) -> None:
 
                     manifest.setdefault(task, {}).setdefault(file_hash, {})[model_name] = {
                         "sample_name": sample_name,
+                        "cache_version": CACHE_VERSION,
+                        "model_fp": model_fp,
                         "predictions": [p.model_dump() for p in job.predictions] if job.predictions else None,
                         "results": [_result_to_cache_entry(r) for r in job.results],
                     }
@@ -151,4 +175,7 @@ def precompute(tasks: list[str], force: bool = False) -> None:
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     force = "--force" in sys.argv
-    precompute(args or TASKS, force=force)
+    for t in args:
+        if t not in ALL_TASKS:
+            sys.exit(f"unknown task: {t} (choose from {ALL_TASKS})")
+    precompute(args or DEFAULT_TASKS, force=force)

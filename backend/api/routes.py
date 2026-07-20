@@ -17,7 +17,7 @@ from backend.core import precompute_cache
 from backend.optimizer.optimizer_service import (
     get_explainer_params, run_optimization, run_with_custom_params,
     save_history, get_history, get_history_record, load_record_input_data,
-    delete_history_record, get_input_data_path,
+    delete_history_record,
 )
 
 router = APIRouter(prefix="/api")
@@ -43,7 +43,10 @@ async def get_models(task: str = Query(...)):
 async def get_explainers(task: str = Query(...), model: Optional[str] = Query(None)):
     handler = get_task_handler(task)
     model_name = model or (handler.get_models()[0]["name"] if handler.get_models() else "")
-    return [ExplainerInfo(**e) for e in handler.get_explainers(model_name)]
+    # get_explainers now loads the model + runs pnpxai detection; keep it off the event loop.
+    loop = asyncio.get_running_loop()
+    explainers = await loop.run_in_executor(None, handler.get_explainers, model_name)
+    return [ExplainerInfo(**e) for e in explainers]
 
 
 @router.post("/explain")
@@ -56,7 +59,7 @@ async def explain(
 ):
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="File too large. Maximum size is 100MB.")
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 10MB.")
 
     # Validate task
     try:
@@ -92,17 +95,28 @@ async def explain(
     store_uploaded_data(job_id, data, task)
     create_job(job_id, task, model_name, names, ranking_metric)
 
+    loop = asyncio.get_running_loop()
+
     # Serve from cache if this is one of our own sample files with precomputed results.
-    # Still staged through the thread pool (not awaited) so the per-explainer "running"
-    # state has time to show in the UI instead of the job completing before the first poll.
+    # The cached entry must also match the current cache version and model weights,
+    # otherwise we fall through and recompute.
     file_hash = precompute_cache.file_sha256(contents)
     cached = precompute_cache.get_precomputed(task, file_hash, model_name)
-    loop = asyncio.get_running_loop()
-    if precompute_cache.is_fully_cached(cached, names):
-        loop.run_in_executor(None, precompute_cache.serve_precomputed, job_id, task, model_name, file_hash, names, ranking_metric, cached)
+    model_fp = None
+    if cached:
+        # Loading a model can be slow (MOMENT-large is GBs) — keep it off the event loop.
+        def _fp():
+            try:
+                return precompute_cache.model_fingerprint(handler.load_model(model_name))
+            except Exception:
+                return None
+        model_fp = await loop.run_in_executor(None, _fp)
+    if precompute_cache.is_fully_cached(cached, names, model_fp):
+        loop.run_in_executor(None, precompute_cache.serve_precomputed,
+                             job_id, task, model_name, file_hash, names, ranking_metric, cached)
     else:
-        # Run pipeline in thread pool executor
-        loop.run_in_executor(None, run_explanation_pipeline, job_id, task, model_name, names, ranking_metric, {})
+        loop.run_in_executor(None, run_explanation_pipeline,
+                             job_id, task, model_name, names, ranking_metric, {})
 
     return {"job_id": job_id}
 
@@ -469,7 +483,7 @@ async def get_samples(task: str, model: Optional[str] = Query(None)):
         return []
     # Priority ordering: listed files appear first, rest alphabetical
     _PRIORITY = {"timeseries": ["boiler.csv", "ecg5000.csv"]}
-    files = [f for f in glob.glob(os.path.join(sample_dir, "*")) if os.path.isfile(f)]
+    files = glob.glob(os.path.join(sample_dir, "*"))
     priority_list = _PRIORITY.get(task, [])
     def _sort_key(fp):
         name = os.path.basename(fp)
@@ -568,11 +582,6 @@ async def run_custom(
     if len(contents) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File too large.")
 
-    try:
-        params = json_mod.loads(custom_params)
-    except json_mod.JSONDecodeError:
-        params = {}
-
     handler = get_task_handler(task)
     if task == "image":
         input_data = load_and_validate_image(contents)
@@ -580,6 +589,11 @@ async def run_custom(
         input_data = contents.decode("utf-8", errors="replace")
     else:
         input_data = contents
+
+    try:
+        params = json_mod.loads(custom_params)
+    except json_mod.JSONDecodeError:
+        params = {}
 
     loop = asyncio.get_running_loop()
     try:
@@ -611,25 +625,6 @@ async def get_record(record_id: str):
     if record is None:
         raise HTTPException(status_code=404, detail="Record not found")
     return record
-
-
-@router.get("/optimizer/history/{record_id}/input")
-async def get_record_input(record_id: str):
-    """Serve the original input file saved for a history record, so the
-    Optimizer page can show Input & Prediction after restoring a session."""
-    record = get_history_record(record_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Record not found")
-
-    path = get_input_data_path(record_id, record["task"])
-    if path is None:
-        raise HTTPException(status_code=404, detail="Input data not found")
-
-    if record["task"] == "image":
-        return FileResponse(path, media_type="image/png")
-    elif record["task"] == "text":
-        return FileResponse(path, media_type="text/plain")
-    return FileResponse(path)
 
 
 @router.post("/optimizer/history/{record_id}/custom")

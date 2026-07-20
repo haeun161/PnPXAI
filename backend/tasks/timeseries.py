@@ -5,36 +5,14 @@ import pandas as pd
 from typing import Any
 
 from backend.tasks.base import TaskHandler
+from backend.core.model_paths import local_dir
 from backend.renderers.timeseries_renderer import render_timeseries_attribution
-
-_TS_EXPLAINERS = [
-    {"name": "IntegratedGradients", "display_name": "Integrated Gradients", "estimated_time": 5},
-    {"name": "SmoothGrad", "display_name": "SmoothGrad", "estimated_time": 5},
-    {"name": "GradientXInput", "display_name": "Gradient × Input", "estimated_time": 3},
-    {"name": "Gradient", "display_name": "Gradient", "estimated_time": 2},
-    {"name": "Lime", "display_name": "LIME", "estimated_time": 25},
-    {"name": "KernelShap", "display_name": "KernelSHAP", "estimated_time": 25},
-]
 
 _loaded_models: dict[str, Any] = {}
 
-
-class SimpleTimeSeriesModel(torch.nn.Module):
-    """Simple 1D CNN for time-series classification demo. Supports multi-variate input."""
-    def __init__(self, num_input_channels: int = 1, num_classes: int = 2):
-        super().__init__()
-        self.conv = torch.nn.Sequential(
-            torch.nn.Conv1d(num_input_channels, 16, kernel_size=5, padding=2),
-            torch.nn.ReLU(),
-            torch.nn.AdaptiveAvgPool1d(1),
-        )
-        self.fc = torch.nn.Linear(16, num_classes)
-
-    def forward(self, x):
-        # x: (batch, channels, seq_len) or (batch, seq_len)
-        if x.dim() == 2:
-            x = x.unsqueeze(1)
-        return self.fc(self.conv(x).squeeze(-1))
+# Fixed seed for the randomly-initialized time-series models, so weights (and therefore
+# predictions/attributions) are reproducible across restarts.
+_INIT_SEED = 42
 
 
 class InceptionBlock(torch.nn.Module):
@@ -93,12 +71,19 @@ class MOMENTWrapper(torch.nn.Module):
     REQUIRED_SEQ_LEN = 512
 
     def __init__(self, num_input_channels: int = 1, num_classes: int = 5,
-                 model_name: str = "AutonLab/MOMENT-1-large", **kwargs):
+                 model_name: str = "AutonLab/MOMENT-1-large", local_key: str = None, **kwargs):
         super().__init__()
+        # Prefer a locally-saved snapshot (models/timeseries/<local_key>); else HF Hub.
+        source, local_only = model_name, False
+        if local_key:
+            d = local_dir("timeseries", local_key)
+            if d.exists():
+                source, local_only = str(d), True
         try:
             from momentfm import MOMENTPipeline
             self._pipeline = MOMENTPipeline.from_pretrained(
-                model_name,
+                source,
+                local_files_only=local_only,
                 model_kwargs={
                     'task_name': 'classification',
                     'n_channels': num_input_channels,
@@ -128,10 +113,10 @@ class MOMENTWrapper(torch.nn.Module):
 
 
 def _moment_large_loader(**kwargs):
-    return MOMENTWrapper(model_name="AutonLab/MOMENT-1-large", **kwargs)
+    return MOMENTWrapper(model_name="AutonLab/MOMENT-1-large", local_key="moment-large", **kwargs)
 
 def _moment_small_loader(**kwargs):
-    return MOMENTWrapper(model_name="AutonLab/MOMENT-1-small", **kwargs)
+    return MOMENTWrapper(model_name="AutonLab/MOMENT-1-small", local_key="moment-small", **kwargs)
 
 
 _TS_MODELS = {
@@ -146,12 +131,6 @@ _TS_MODELS = {
         "architecture": "Transformer (T5)",
         "description": "MOMENT small: lightweight version, faster inference. Input auto-padded to 512 timesteps.",
         "loader": _moment_small_loader,
-    },
-    "simple-cnn-1d": {
-        "display_name": "Simple 1D CNN",
-        "architecture": "1D CNN",
-        "description": "Simple 1D CNN for univariate time-series. Auto-adapts to multi-variate input.",
-        "loader": SimpleTimeSeriesModel,
     },
     "inception-time": {
         "display_name": "InceptionTime",
@@ -273,13 +252,25 @@ class TimeSeriesTaskHandler(TaskHandler):
             for name, info in _TS_MODELS.items()
         ]
 
+    # pnpxai recommends these for TS models but the pipeline can't run them on 1D-conv /
+    # MOMENT inputs (CAM needs 2D spatial maps; RAP & perturbation methods fail at runtime).
+    _UNSUPPORTED = {"GradCam", "GuidedGradCam", "RAP", "Lime", "KernelShap"}
+
+    # Per-model additions: InceptionTime concatenates branch outputs (torch.cat), which
+    # breaks zennit's LRP rules the same way DenseNet's dense blocks do.
+    _MODEL_UNSUPPORTED = {
+        "inception-time": {"LRPUniformEpsilon", "LRPEpsilonPlus", "LRPEpsilonGammaBox",
+                           "LRPEpsilonAlpha2Beta1"},
+    }
+
     def get_explainers(self, model_name: str) -> list[dict]:
-        return [
-            {"name": e["name"], "display_name": e["display_name"],
-             "estimated_compute_time_seconds": e["estimated_time"],
-             "compatible": True, "incompatibility_reason": None}
-            for e in _TS_EXPLAINERS
-        ]
+        # Detection-driven, minus known-incompatible methods, so the list == what actually runs.
+        from backend.core.explainer_catalog import detect_explainers
+        model = self.load_model(model_name)
+        exclude = self._UNSUPPORTED | self._MODEL_UNSUPPORTED.get(model_name, set())
+        return detect_explainers(model, self.get_modality(),
+                                 cache_key=f"timeseries:{model_name}",
+                                 exclude=exclude)
 
     def load_model(self, model_name: str, num_input_channels: int = 1) -> torch.nn.Module:
         if model_name not in _TS_MODELS:
@@ -288,11 +279,22 @@ class TimeSeriesTaskHandler(TaskHandler):
         default_ch = _TS_MODELS[model_name].get("default_channels")
         ch = default_ch if default_ch is not None else num_input_channels
         cache_key = f"{model_name}_{ch}"
+        from backend.core.device import to_device
         if cache_key not in _loaded_models:
-            model = _TS_MODELS[model_name]["loader"](num_input_channels=ch)
+            # These models have no pretrained weights (Simple-CNN / InceptionTime are
+            # randomly initialized, MOMENT's classification head likewise). Seed the
+            # construction so weights are identical across restarts — otherwise results
+            # aren't reproducible and precomputed caches wouldn't match the live model.
+            # RNG state is saved/restored so we don't perturb anything else.
+            rng_state = torch.get_rng_state()
+            try:
+                torch.manual_seed(_INIT_SEED)
+                model = _TS_MODELS[model_name]["loader"](num_input_channels=ch)
+            finally:
+                torch.set_rng_state(rng_state)
             model.eval()
             _loaded_models[cache_key] = model
-        return _loaded_models[cache_key]
+        return to_device(_loaded_models[cache_key])
 
     def preprocess_input(self, raw_data: Any) -> Any:
         if isinstance(raw_data, bytes):
