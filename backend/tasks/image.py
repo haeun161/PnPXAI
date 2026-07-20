@@ -267,13 +267,18 @@ class ImageTaskHandler(TaskHandler):
                         "LRPEpsilonAlpha2Beta1", "RAP"},
     }
 
+    # Only one LRP variant is exposed in the UI — the other three are hidden for every
+    # image model regardless of whether pnpxai detects them as compatible.
+    _ALWAYS_EXCLUDED = {"LRPEpsilonPlus", "LRPEpsilonGammaBox", "LRPEpsilonAlpha2Beta1"}
+
     def get_explainers(self, model_name: str) -> list[dict]:
         # Detection-driven, minus known-incompatible methods, so the list == what actually runs.
         from backend.core.explainer_catalog import detect_explainers
         model = self.load_model(model_name)
+        exclude = self._ALWAYS_EXCLUDED | self._MODEL_UNSUPPORTED.get(model_name, set())
         return detect_explainers(model, self.get_modality(),
                                  cache_key=f"image:{model_name}",
-                                 exclude=self._MODEL_UNSUPPORTED.get(model_name, set()))
+                                 exclude=exclude)
 
     def load_model(self, model_name: str) -> torch.nn.Module:
         from backend.core.device import to_device
