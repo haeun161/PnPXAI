@@ -75,3 +75,8 @@ export async function getJobStatus(jobId: string): Promise<JobStatus> {
   if (!res.ok) throw new Error("Failed to fetch job status");
   return res.json();
 }
+
+export async function cancelExplainJob(jobId: string): Promise<void> {
+  const res = await fetch(`${BASE}/jobs/${jobId}/cancel`, { method: "POST" });
+  if (!res.ok) throw new Error("Failed to cancel job");
+}

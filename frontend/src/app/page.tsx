@@ -72,7 +72,8 @@ export default function Home() {
   // covers the /explainers + /recommend round-trip so the button reacts immediately
   // instead of appearing dead while detection runs.
   const [starting, setStarting] = useState(false);
-  const { job, loading, error, startJob, attachToJob, reset } = useExplainJob();
+  const { job, loading, error, startJob, attachToJob, reset, cancelJob } = useExplainJob();
+  const [cancelling, setCancelling] = useState(false);
 
   // Restore state on mount (returning from Optimizer)
   const restoredRef = useRef(false);
@@ -90,6 +91,11 @@ export default function Home() {
     if (saved.jobId) attachToJob(saved.jobId);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+
+  // Job finished (completed/failed/cancelled) — drop the "Cancelling…" state.
+  useEffect(() => {
+    if (!loading) setCancelling(false);
+  }, [loading]);
 
   // Persist state whenever it changes
   useEffect(() => {
@@ -164,6 +170,11 @@ export default function Home() {
     }
   };
 
+  const handleCancel = () => {
+    setCancelling(true);
+    cancelJob();
+  };
+
   const busy = loading || starting;
 
   return (
@@ -184,17 +195,30 @@ export default function Home() {
             <DataInput task={task} onDataReady={(data) => setInputData(data)} disabled={busy} />
 
             <div className="space-y-2">
-              <button
-                onClick={handleExplain}
-                disabled={!task || !model || !inputData || busy}
-                className="w-full py-1.5 text-sm rounded-lg font-semibold text-white bg-blue-500 border-2 border-blue-500 hover:bg-blue-100 hover:border-blue-500 disabled:border-gray-200 disabled:text-gray-400 disabled:bg-white disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                </svg>
-                EXPLAIN
-              </button>
+              {loading ? (
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="w-full py-1.5 text-sm rounded-lg font-semibold text-red-500 bg-white border-2 border-red-500 hover:bg-red-50 disabled:border-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <rect x="6" y="6" width="12" height="12" strokeWidth={2} />
+                  </svg>
+                  {cancelling ? "Cancelling..." : "Cancel"}
+                </button>
+              ) : (
+                <button
+                  onClick={handleExplain}
+                  disabled={!task || !model || !inputData || busy}
+                  className="w-full py-1.5 text-sm rounded-lg font-semibold text-white bg-blue-500 border-2 border-blue-500 hover:bg-blue-100 hover:border-blue-500 disabled:border-gray-200 disabled:text-gray-400 disabled:bg-white disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  EXPLAIN
+                </button>
+              )}
               {(!task || !model) && (
                 <p className="text-xs text-gray-400 text-center">Select task, model, and data to get started</p>
               )}

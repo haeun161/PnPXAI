@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef, useCallback } from "react";
 import { JobStatus, TaskType } from "@/lib/types";
-import { submitExplainJob, getJobStatus } from "@/lib/api";
+import { submitExplainJob, getJobStatus, cancelExplainJob } from "@/lib/api";
 
 const POLL_INTERVAL = 2000;
 const MAX_POLL_TIME = 5 * 60 * 1000;
@@ -17,6 +17,7 @@ export function useExplainJob() {
   // or installing an interval — so a stale call can never clobber a newer one,
   // even if their async steps (submit, first poll) resolve out of order.
   const generationRef = useRef(0);
+  const jobIdRef = useRef<string | null>(null);
 
   const stopPolling = useCallback(() => {
     if (timerRef.current) {
@@ -36,6 +37,7 @@ export function useExplainJob() {
       try {
         const jobId = await submitExplainJob(task, file, modelName, explainerNames, rankingMetric);
         if (myGeneration !== generationRef.current) return;
+        jobIdRef.current = jobId;
         startTimeRef.current = Date.now();
 
         const poll = async () => {
@@ -45,7 +47,7 @@ export function useExplainJob() {
             if (myGeneration !== generationRef.current) return;
             setJob(status);
 
-            if (status.status === "completed" || status.status === "failed") {
+            if (status.status === "completed" || status.status === "failed" || status.status === "cancelled") {
               stopPolling();
               setLoading(false);
               if (status.status === "failed") {
@@ -76,6 +78,7 @@ export function useExplainJob() {
   const attachToJob = useCallback(
     async (jobId: string) => {
       const myGeneration = ++generationRef.current;
+      jobIdRef.current = jobId;
       setLoading(true);
       setError(null);
       setJob(null);
@@ -87,7 +90,7 @@ export function useExplainJob() {
         const status = await getJobStatus(jobId);
         if (myGeneration !== generationRef.current) return;
         setJob(status);
-        if (status.status === "completed" || status.status === "failed") {
+        if (status.status === "completed" || status.status === "failed" || status.status === "cancelled") {
           setLoading(false);
           if (status.status === "failed") setError(status.error_message || "Job failed.");
           return;
@@ -105,7 +108,7 @@ export function useExplainJob() {
           const status = await getJobStatus(jobId);
           if (myGeneration !== generationRef.current) return;
           setJob(status);
-          if (status.status === "completed" || status.status === "failed") {
+          if (status.status === "completed" || status.status === "failed" || status.status === "cancelled") {
             stopPolling();
             setLoading(false);
             if (status.status === "failed") setError(status.error_message || "Job failed.");
@@ -131,11 +134,22 @@ export function useExplainJob() {
 
   const reset = useCallback(() => {
     generationRef.current++;
+    jobIdRef.current = null;
     stopPolling();
     setJob(null);
     setLoading(false);
     setError(null);
   }, [stopPolling]);
 
-  return { job, loading, error, startJob, attachToJob, reset };
+  // Requests cancellation; the job keeps running the explainer currently in flight,
+  // then stops. The next poll (already ticking on POLL_INTERVAL) picks up the
+  // "cancelled" status and results gathered so far — no local state to reconcile here.
+  const cancelJob = useCallback(async () => {
+    if (!jobIdRef.current) return;
+    try {
+      await cancelExplainJob(jobIdRef.current);
+    } catch { /* best effort — next poll will still show whatever the job reaches */ }
+  }, []);
+
+  return { job, loading, error, startJob, attachToJob, reset, cancelJob };
 }

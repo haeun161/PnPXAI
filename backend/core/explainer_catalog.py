@@ -21,7 +21,7 @@ _META = {
     "GuidedGradCam":          ("Guided Grad-CAM", 3, 11),
     "AttentionRollout":       ("Attention Rollout", 3, 12),
     "TransformerAttribution": ("Transformer Attribution", 5, 13),
-    "LRPUniformEpsilon":      ("LRP (Epsilon)", 3, 20),
+    "LRP":                    ("LRP", 3, 20),
     "LRPEpsilonPlus":         ("LRP (Epsilon+)", 3, 21),
     "LRPEpsilonGammaBox":     ("LRP (Epsilon-γ-box)", 3, 22),
     "LRPEpsilonAlpha2Beta1":  ("LRP (α2β1)", 3, 23),

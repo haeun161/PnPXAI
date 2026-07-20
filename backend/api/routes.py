@@ -10,7 +10,7 @@ from backend.tasks import get_task_handler, list_tasks
 from backend.core.image_utils import load_and_validate_image
 from backend.core.job_manager import (
     create_job, get_job, store_uploaded_data, VISUALIZATION_DIR,
-    update_job_status, update_job_predictions, update_job_result,
+    update_job_status, update_job_predictions, update_job_result, request_cancel,
 )
 from backend.core.pipeline import run_explanation_pipeline
 from backend.core import precompute_cache
@@ -450,6 +450,16 @@ async def get_job_status(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     return job
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    """Request cancellation of a running /explain job. Takes effect between explainers —
+    whichever one is currently attributing finishes first, then the job stops with
+    only the results computed so far."""
+    if not request_cancel(job_id):
+        raise HTTPException(status_code=404, detail="Job not found or already finished")
+    return {"status": "cancelling"}
 
 
 @router.get("/jobs/{job_id}/visualizations/{filename}")

@@ -36,6 +36,7 @@ def create_job(job_id: str, task: str, model_name: str, explainer_names: list[st
             "results": [],
             "error_message": None,
             "created_at": time.time(),
+            "cancel_requested": False,
         }
 
 
@@ -89,6 +90,22 @@ def update_job_status(job_id: str, status: str, error_message: Optional[str] = N
             _jobs[job_id]["status"] = status
             if error_message:
                 _jobs[job_id]["error_message"] = error_message
+
+
+def request_cancel(job_id: str) -> bool:
+    """Mark a running job for cancellation. False if the job doesn't exist or already finished."""
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None or job["status"] in ("completed", "failed", "cancelled"):
+            return False
+        job["cancel_requested"] = True
+        return True
+
+
+def is_cancel_requested(job_id: str) -> bool:
+    with _lock:
+        job = _jobs.get(job_id)
+        return bool(job and job["cancel_requested"])
 
 
 def update_job_predictions(job_id: str, predictions: list[dict]):

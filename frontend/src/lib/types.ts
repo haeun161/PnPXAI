@@ -50,7 +50,7 @@ export interface PredictionItem {
 
 export interface JobStatus {
   job_id: string;
-  status: "pending" | "running" | "partial" | "completed" | "failed";
+  status: "pending" | "running" | "partial" | "completed" | "failed" | "cancelled";
   task: TaskType;
   model_name: string;
   explainer_names: string[];

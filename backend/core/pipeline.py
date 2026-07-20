@@ -10,6 +10,7 @@ from backend.core.pnpxai_adapter import normalize_attribution, extract_metric_va
 from backend.core.job_manager import (
     get_uploaded_data, update_job_status, update_job_predictions,
     update_job_result, update_result_step, rank_completed_results, VISUALIZATION_DIR,
+    is_cancel_requested,
 )
 
 def _sliding_window_attribution(explainer_instance, input_tensor, target_tensor, window_size=512, stride=None):
@@ -282,7 +283,8 @@ def run_explanation_pipeline(
 ):
     """Synchronous pipeline - runs in thread pool executor."""
     from backend.core.device import begin_job, end_job
-    begin_job()  # paired with end_job() in the finally below (frees GPU when idle)
+    begin_job()  # paired with end_job() below (frees GPU when idle)
+    job_ended = False
     try:
         import random
         random.seed(42)
@@ -382,6 +384,9 @@ def run_explanation_pipeline(
         all_results = []
 
         for exp_name in explainer_names:
+            if is_cancel_requested(job_id):
+                break
+
             exp_info = next((e for e in handler.get_explainers(model_name) if e["name"] == exp_name), None)
             display_name = exp_info["display_name"] if exp_info else exp_name
 
@@ -553,12 +558,20 @@ def run_explanation_pipeline(
             if r["status"] == "completed":
                 update_job_result(job_id, r)
 
-        update_job_status(job_id, "completed")
+        # Release GPU memory (if idle) BEFORE marking the job terminal. A client
+        # polling the job's status treats "cancelled"/"completed" as a signal that
+        # it's safe to immediately start a new job on the same (cached) model; if we
+        # flipped the status first, a fast re-click could start loading that model
+        # onto the device while this thread is still mid-offload, racing two threads'
+        # .to() calls on the same module and corrupting CUDA state.
+        end_job()
+        job_ended = True
+        update_job_status(job_id, "cancelled" if is_cancel_requested(job_id) else "completed")
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         update_job_status(job_id, "failed", str(e))
     finally:
-        # Release GPU memory once no other job is in flight.
-        end_job()
+        if not job_ended:
+            end_job()
