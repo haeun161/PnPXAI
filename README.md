@@ -53,7 +53,7 @@ Interactive eXplainable AI demo platform supporting **Image Classification**, **
 ```bash
 pip install -r backend/requirements.txt
 pip install momentfm --no-deps  # MOMENT time-series foundation model
-uvicorn backend.api.routes:app --host 0.0.0.0 --port 8000 --reload
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 Server runs at http://localhost:8000
