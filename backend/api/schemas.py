@@ -50,6 +50,29 @@ class PredictionItem(BaseModel):
     probability: float
 
 
+class ForecastInfo(BaseModel):
+    """Populated instead of `predictions` for forecasting time-series models, whose
+    output is a future trajectory rather than class probabilities.
+
+    Holds a backtest: the last `pred_len` points of the uploaded series are held out,
+    the `context` window immediately before them is fed to the model, and `predicted`
+    is what it produced. `actual` is the held-out truth, so the UI can draw predicted
+    against observed — it is None only when the upload is too short to hold anything
+    out, in which case the horizon runs past the end of the data.
+
+    Series are (timestep, channel) so every channel can be plotted, not just the first.
+    """
+    col_names: list[str]
+    context: list[list[float]]
+    predicted: list[list[float]]
+    actual: Optional[list[list[float]]] = None
+    context_labels: Optional[list[str]] = None
+    horizon_labels: Optional[list[str]] = None
+    # Channel the explainers attributed, so the chart can flag when the viewer is
+    # looking at a different one than the attributions describe.
+    attributed_channel: int = 0
+
+
 class JobStatus(BaseModel):
     job_id: str
     status: str  # "pending", "running", "partial", "completed", "failed"
@@ -58,6 +81,7 @@ class JobStatus(BaseModel):
     explainer_names: list[str]
     ranking_metric: str = "mu_fidelity"
     predictions: Optional[list[PredictionItem]] = None
+    forecast: Optional[ForecastInfo] = None
     original_data_url: Optional[str] = None
     results: list[ExplainerResult] = []
     error_message: Optional[str] = None

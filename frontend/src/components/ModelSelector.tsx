@@ -13,6 +13,12 @@ interface Props {
 type Mode = "preset" | "custom";
 type LoadStatus = "idle" | "loading" | "success" | "error";
 
+const HF_EXAMPLES: Record<string, string> = {
+  image: "https://huggingface.co/microsoft/resnet-50",
+  text: "https://huggingface.co/distilbert/distilbert-base-uncased-finetuned-sst-2-english",
+  timeseries: "https://huggingface.co/ibm-research/patchtst-etth1-pretrain",
+};
+
 function parseHfModelId(input: string): string {
   try {
     const url = new URL(input);
@@ -173,7 +179,8 @@ export default function ModelSelector({ task, selected, onSelect, disabled }: Pr
               )}
               {loadStatus === "idle" && (
                 <p className="text-xs text-gray-400">
-                  e.g. https://huggingface.co/microsoft/resnet-50
+                  e.g. {HF_EXAMPLES[task] ?? HF_EXAMPLES.image}
+                  {task === "timeseries"}
                 </p>
               )}
             </div>

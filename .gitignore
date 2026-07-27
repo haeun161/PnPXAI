@@ -11,6 +11,9 @@ venv/
 # Generated attribution heatmaps (runtime output; may contain uploaded user images)
 **/heatmaps/
 
+# Model weights uploaded at runtime via the Custom tab
+**/uploaded_models/
+
 # Node
 node_modules/
 .next/

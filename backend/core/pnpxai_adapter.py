@@ -5,7 +5,10 @@ from typing import Optional
 
 
 def normalize_attribution(attribution, task: str = "image") -> np.ndarray:
-    """Normalize attribution tensor/array to numpy [0, 1] range.
+    """Normalize attribution to a numpy array scaled by its largest magnitude.
+
+    Time-series keeps its sign, so the range is [-1, 1]; the other tasks aggregate with
+    an absolute value or norm first and so come out in [0, 1].
 
     Args:
         task: "image" → (C,H,W)→(H,W), "text" → (seq,hidden)→(seq,), "timeseries" → (ch,seq) kept as-is
@@ -27,8 +30,10 @@ def normalize_attribution(attribution, task: str = "image") -> np.ndarray:
         attr_np = np.linalg.norm(attr_np, axis=0)
     elif attr_np.ndim == 2:
         if task == "timeseries":
-            # Time-series (channels, seq_len): keep as-is for per-channel attribution
-            attr_np = np.abs(attr_np)
+            # Time-series (channels, seq_len): keep per-channel *and* signed, so the
+            # plot can tell "pushed the prediction up" from "pushed it down". There is
+            # no axis to aggregate here, unlike image/text below.
+            pass
         else:
             # Text (seq_len, hidden_dim) -> (seq_len,): mean over hidden dim
             attr_np = np.mean(np.abs(attr_np), axis=-1)

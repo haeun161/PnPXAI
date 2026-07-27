@@ -1,4 +1,4 @@
-import { TaskInfo, TaskType, ModelInfo, ExplainerInfo, JobStatus } from "./types";
+import { TaskInfo, TaskType, ModelInfo, ExplainerInfo, JobStatus, SampleFile } from "./types";
 
 const BASE = "/api";
 
@@ -40,12 +40,31 @@ export async function validateHfModel(task: TaskType, hfModelId: string): Promis
   return res.json();
 }
 
+export async function uploadModel(task: TaskType, file: File): Promise<{ model_id: string; display_name: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${BASE}/upload-model?task=${task}`, { method: "POST", body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Upload failed" }));
+    throw new Error(err.detail || "Upload failed");
+  }
+  return res.json();
+}
+
+export async function getSamples(task: TaskType, model?: string): Promise<SampleFile[]> {
+  const url = model ? `${BASE}/samples/${task}?model=${encodeURIComponent(model)}` : `${BASE}/samples/${task}`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  return res.json();
+}
+
 export async function submitExplainJob(
   task: TaskType,
   file: File | Blob,
   modelName: string,
   explainerNames: string[],
   rankingMetric: string = "average",
+  dataName?: string,
 ): Promise<string> {
   const formData = new FormData();
   formData.append("file", file);
@@ -56,6 +75,8 @@ export async function submitExplainJob(
     explainer_names: explainerNames.join(","),
     ranking_metric: rankingMetric,
   });
+  // Lets the server pick the checkpoint trained on this dataset; absent for uploads.
+  if (dataName) params.set("data_name", dataName);
 
   const res = await fetch(`${BASE}/explain?${params}`, {
     method: "POST",

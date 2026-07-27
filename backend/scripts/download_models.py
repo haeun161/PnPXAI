@@ -8,8 +8,8 @@ Target layout (root resolved by backend.core.model_paths — $PNPXAI_MODEL_DIR o
       image/resnet50.pth               (torchvision state_dict)
       image/vgg16.pth
       image/densenet121.pth
-      timeseries/moment-large/         (HF snapshot)
-      timeseries/moment-small/
+      timeseries/iTransformer_etth1.pth      (forecaster checkpoint; supplied, not downloaded)
+      timeseries/iTransformer_illness.pth
 
 Once populated, the task handlers load from here with local_files_only=True and
 never touch the network. Weights are NOT committed to git (see models/.gitignore);
@@ -18,7 +18,6 @@ re-run this script on a fresh deployment.
 Usage (inside the container, repo mounted at /project):
     python -m backend.scripts.download_models              # all
     python -m backend.scripts.download_models --only text image
-    python -m backend.scripts.download_models --only timeseries
 """
 import argparse
 import sys
@@ -34,10 +33,6 @@ TEXT_MODELS = {
     "distilbert-sst2": "distilbert-base-uncased-finetuned-sst-2-english",
 }
 IMAGE_MODELS = ["resnet50", "vgg16", "densenet121"]
-TS_MOMENT = {
-    "moment-large": "AutonLab/MOMENT-1-large",
-    "moment-small": "AutonLab/MOMENT-1-small",
-}
 
 
 def _dir_size_mb(path: Path) -> float:
@@ -75,21 +70,9 @@ def download_image():
         print(f"        saved -> {dest}  ({_dir_size_mb(dest):.0f} MB)")
 
 
-def download_timeseries():
-    # MOMENT foundation models: snapshot the HF repo into the local dir so the
-    # handler can from_pretrained(local, local_files_only=True). Simple-CNN and
-    # InceptionTime are randomly initialized in code (no pretrained weights) and
-    # need nothing here.
-    from huggingface_hub import snapshot_download
-    for name, repo_id in TS_MOMENT.items():
-        dest = local_dir("timeseries", name)
-        dest.mkdir(parents=True, exist_ok=True)
-        print(f"[timeseries] {name} <- {repo_id}")
-        snapshot_download(repo_id=repo_id, local_dir=str(dest))
-        print(f"             saved -> {dest}  ({_dir_size_mb(dest):.0f} MB)")
-
-
-TASKS = {"text": download_text, "image": download_image, "timeseries": download_timeseries}
+# Time-series has nothing to download: the forecaster is a trained checkpoint that is
+# placed in models/timeseries/ by hand, not pulled from a hub.
+TASKS = {"text": download_text, "image": download_image}
 
 
 def main():

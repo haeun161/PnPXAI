@@ -8,7 +8,7 @@ import torch
 from backend.tasks import get_task_handler
 from backend.core.pnpxai_adapter import normalize_attribution, extract_metric_value
 from backend.core.job_manager import (
-    get_uploaded_data, update_job_status, update_job_predictions,
+    get_uploaded_data, update_job_status, update_job_predictions, update_job_forecast,
     update_job_result, update_result_step, rank_completed_results, VISUALIZATION_DIR,
     is_cancel_requested,
 )
@@ -273,6 +273,71 @@ def _run_text_inference(handler, model, raw_text, model_name):
     return target_class, predictions, input_embeds, input_ids, tokens, wrapper_model
 
 
+def _run_ts_backtest(job_id: str, model, input_tensor: torch.Tensor, input_data: dict) -> torch.Tensor:
+    """Back-test a forecasting model against the tail of the uploaded series and record
+    the result for the Input & Prediction chart.
+
+    The last `pred_len` points are held out and forecast from the `seq_len` window right
+    before them. That context window is returned and becomes the explainers' input, so
+    the chart and the attributions describe the same single forward pass. When the upload
+    is too short to hold anything out, the horizon simply runs past the end of the data
+    and there is no observed series to compare against.
+    """
+    seq_len = getattr(model, "SEQ_LEN", 96)
+    pred_len = getattr(model, "PRED_LEN", 96)
+    total = input_tensor.shape[-1]
+    labels = input_data.get("time_labels")
+    timestamps = input_data.get("timestamps")
+
+    has_actual = total >= seq_len + pred_len
+    if has_actual:
+        ctx_slice = slice(total - seq_len - pred_len, total - pred_len)
+        hz_slice = slice(total - pred_len, total)
+    else:
+        ctx_slice = slice(max(total - seq_len, 0), total)
+        hz_slice = None
+
+    context = input_tensor[..., ctx_slice]
+    actual = input_tensor[..., hz_slice] if has_actual else None
+
+    if hasattr(model, "set_time_context"):
+        model.set_time_context(timestamps[ctx_slice] if timestamps is not None else None)
+
+    predicted = model.forecast_horizon(context)  # (pred_len, channels)
+
+    ctx_labels = labels[ctx_slice] if labels else None
+    if not labels:
+        hz_labels = None
+    elif has_actual:
+        hz_labels = labels[hz_slice]
+    elif timestamps is not None and len(timestamps) > 1:
+        step = timestamps[-1] - timestamps[-2]
+        hz_labels = [(timestamps[-1] + step * (i + 1)).strftime("%Y-%m-%d %H:%M")
+                     for i in range(pred_len)]
+    else:
+        hz_labels = [f"+{i + 1}" for i in range(pred_len)]
+
+    col_names = input_data.get("col_names") or [f"var_{i + 1}" for i in range(context.shape[1])]
+    update_job_forecast(job_id, {
+        "col_names": col_names,
+        "context": context[0].transpose(0, 1).detach().cpu().tolist(),
+        "predicted": predicted.detach().cpu().tolist(),
+        "actual": actual[0].transpose(0, 1).detach().cpu().tolist() if actual is not None else None,
+        "context_labels": ctx_labels,
+        "horizon_labels": hz_labels,
+        "attributed_channel": (model.channel_for(len(col_names))
+                               if hasattr(model, "channel_for") else 0),
+    })
+
+    # Keep rendering aligned with what was actually explained — including the labels, or
+    # the renderer sees a full-series label list against a context-length x-axis, gives up
+    # on the length mismatch, and falls back to bare timestep indices.
+    input_data["tensor"] = context
+    if ctx_labels:
+        input_data["time_labels"] = ctx_labels
+    return context
+
+
 def run_explanation_pipeline(
     job_id: str,
     task: str,
@@ -326,53 +391,19 @@ def run_explanation_pipeline(
                 input_tensor = input_data["tensor"]
                 data_channels = input_tensor.shape[1]
 
-                # Check model-data channel compatibility
-                from backend.tasks.timeseries import _TS_MODELS
-                model_info = _TS_MODELS.get(model_name, {})
-                model_default_ch = model_info.get("default_channels")
-
-                if model_default_ch is not None and model_default_ch != data_channels:
-                    update_job_status(
-                        job_id, "failed",
-                        f"Channel mismatch: model '{model_name}' expects {model_default_ch}-channel input, "
-                        f"but data has {data_channels} channel(s). "
-                        f"Please use a {'multi-variate' if data_channels > 1 else 'single-variate'} model, "
-                        f"or upload {'multi-variate' if model_default_ch > 1 else 'single-variate'} data."
-                    )
-                    return
-
-                model = handler.load_model(model_name, num_input_channels=data_channels)
+                # The selected sample decides which checkpoint backs the chosen model.
+                model = handler.load_model(model_name, num_input_channels=data_channels,
+                                           dataset=params.get("data_name"))
                 explainer_model = model
                 from backend.core.device import model_device
                 input_tensor = input_tensor.to(model_device(model))
-
-                # Run inference for prediction display
                 model.eval()
-                with torch.no_grad():
-                    # For large data, use first window for inference
-                    window_size = params.get("window_size", 512)
-                    infer_input = input_tensor
-                    if input_tensor.shape[-1] > window_size:
-                        infer_input = input_tensor[..., :window_size]
-                    ts_output = model(infer_input)
-                    ts_probs = torch.softmax(ts_output, dim=1)[0]
-                    target_class = ts_probs.argmax().item()
 
-                # Build predictions from label_info or model output
-                label_info = input_data.get("label_info")
-                if label_info and len(label_info["classes"]) == ts_probs.shape[0]:
-                    class_names = {0: "Normal", 1: "Abnormal"} if set(label_info["classes"]) == {0, 1} else {}
-                    predictions = [
-                        {"class_name": class_names.get(c, str(c)), "probability": round(ts_probs[i].item() * 100, 2)}
-                        for i, c in enumerate(label_info["classes"])
-                    ]
-                else:
-                    predictions = [
-                        {"class_name": f"Class {i}", "probability": round(p.item() * 100, 2)}
-                        for i, p in enumerate(ts_probs)
-                    ]
-                predictions.sort(key=lambda x: x["probability"], reverse=True)
-                update_job_predictions(job_id, predictions)
+                # Time-series is forecast-only: the chart gets a back-test, and the
+                # explainers get the very context window that produced it. There is one
+                # output (the next predicted value), so there is no class to pick.
+                input_tensor = _run_ts_backtest(job_id, model, input_tensor, input_data)
+                target_class = 0
             else:
                 input_tensor = input_data if isinstance(input_data, torch.Tensor) else None
                 target_class = 0
@@ -491,7 +522,16 @@ def run_explanation_pipeline(
                     "Sensitivity": "Evaluating Sensitivity",
                     "Complexity":  "Evaluating Complexity",
                 }
-                metric_list = ["AbPC", "Sensitivity", "Complexity"] if task == "text" else ["MuFidelity", "AbPC", "Sensitivity", "Complexity"]
+                # Both classification-only: MuFidelity masks a 2D grid of pixels, and
+                # AbPC scores the target *class probability*. A forecaster emits one
+                # continuous value, so AbPC's softmax is constant and its score is
+                # identically 0 — a misleading number rather than a measurement.
+                if task == "timeseries":
+                    metric_list = ["Sensitivity", "Complexity"]
+                elif task == "text":
+                    metric_list = ["AbPC", "Sensitivity", "Complexity"]
+                else:
+                    metric_list = ["MuFidelity", "AbPC", "Sensitivity", "Complexity"]
                 for metric_name in metric_list:
                     update_result_step(job_id, exp_name, _METRIC_LABELS[metric_name])
                     try:

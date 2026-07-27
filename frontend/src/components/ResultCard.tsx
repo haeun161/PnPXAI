@@ -1,5 +1,6 @@
 "use client";
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { ExplainerResult, TaskType } from "@/lib/types";
 import RetryImage from "./RetryImage";
@@ -20,6 +21,12 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
   const [showZoom, setShowZoom] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  // The zoom overlay is portalled to <body>. It has to be: the card wrapper keeps a
+  // `transform` after its entry animation (fill-mode: both), which makes it the
+  // containing block for position:fixed children — so rendering the overlay in place
+  // would size it to the card and then clip it against the card's overflow-hidden.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const dragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
 
   const zoomUrl = (task === "timeseries" && result.visualization_url)
@@ -91,8 +98,12 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
       ? (result.mu_fidelity + result.abpc) / 2
       : result.mu_fidelity ?? result.abpc;
 
+  // Faithfulness comes from classification-only metrics, which the backend skips for
+  // time-series — so there is no value to show rather than a misleading zero.
   const metrics = [
-    { key: "faithfulness", label: "Faithfulness", value: faithfulness },
+    ...(task === "timeseries"
+      ? []
+      : [{ key: "faithfulness", label: "Faithfulness", value: faithfulness }]),
     { key: "sensitivity",  label: "Robustness",   value: result.sensitivity },
     { key: "complexity",   label: "Compactness",  value: result.complexity },
   ];
@@ -100,7 +111,7 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full">
       {/* Zoom modal */}
-      {showZoom && zoomUrl && (
+      {mounted && showZoom && zoomUrl && createPortal(
         <div
           className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center overflow-hidden"
           onClick={() => { setShowZoom(false); setZoom(1); setPan({ x: 0, y: 0 }); }}
@@ -133,7 +144,8 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
               userSelect: "none",
             }}
           />
-        </div>
+        </div>,
+        document.body
       )}
 
       <div className={`relative bg-gray-50 flex-shrink-0 ${task === "text" ? "h-[380px]" : "flex-1 min-h-0"}`}>

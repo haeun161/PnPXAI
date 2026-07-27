@@ -213,8 +213,10 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
   const handleWeightChange = onWeightChange ?? (() => {});
   const handleResetWeights = onResetWeights ?? (() => {});
 
+  // Faithfulness isn't computed for time-series (classification-only metrics), so it
+  // must not count towards the ranking or appear in the "ranked by" label.
   const activeMetrics = Object.entries(metricWeights)
-    .filter(([, w]) => w > 0)
+    .filter(([k, w]) => w > 0 && !(task === "timeseries" && k === "faithfulness"))
     .map(([k]) => k);
 
   const METRIC_DISPLAY: Record<string, string> = {
@@ -278,13 +280,30 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
           </div>
         </div>
           <div className="p-6 overflow-y-auto" style={{ height: "calc(100vh - 61px)" }}>
-          <div className="grid grid-cols-5 gap-3" style={{ gridAutoRows: "calc((100vh - 61px - 48px - 16px) / 2)" }}>
-            {rankedResults.map((r, i) => (
-              <div key={r.explainer_name} className="animate-card-in h-full" style={{ animationDelay: `${i * 60}ms` }}>
-                <ResultCard result={r} task={task} activeMetrics={activeMetrics} metricWeights={metricWeights} modelName={job?.model_name} dataUrl={job?.original_data_url} isExpanded />
-              </div>
-            ))}
-          </div>
+          {task === "timeseries" ? (
+            // Time-series attributions are wide, so wrapping into a second row halves the
+            // height each one gets. Keep them on one full-height row, five across, and
+            // scroll sideways past the fifth.
+            <div className="flex gap-3 overflow-x-auto pb-2" style={{ height: "calc(100vh - 61px - 48px)" }}>
+              {rankedResults.map((r, i) => (
+                <div
+                  key={r.explainer_name}
+                  className="animate-card-in flex-shrink-0 h-full"
+                  style={{ width: "calc((100% - 3rem) / 5)", animationDelay: `${i * 60}ms` }}
+                >
+                  <ResultCard result={r} task={task} activeMetrics={activeMetrics} metricWeights={metricWeights} modelName={job?.model_name} dataUrl={job?.original_data_url} isExpanded />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-5 gap-3" style={{ gridAutoRows: "calc((100vh - 61px - 48px - 16px) / 2)" }}>
+              {rankedResults.map((r, i) => (
+                <div key={r.explainer_name} className="animate-card-in h-full" style={{ animationDelay: `${i * 60}ms` }}>
+                  <ResultCard result={r} task={task} activeMetrics={activeMetrics} metricWeights={metricWeights} modelName={job?.model_name} dataUrl={job?.original_data_url} isExpanded />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );

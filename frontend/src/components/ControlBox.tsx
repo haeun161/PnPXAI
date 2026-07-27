@@ -35,6 +35,12 @@ export default function ControlBox({
   hiddenExplainers, onToggleHidden, onSetAllHidden,
   task, metricWeights, onWeightChange, onResetWeights,
 }: Props) {
+  // Faithfulness comes from classification-only metrics, which aren't computed for
+  // time-series — so it gets no weight control and no toggle there.
+  const metricLabels = METRIC_LABELS.filter(
+    ({ key }) => !(task === "timeseries" && key === "faithfulness")
+  );
+
   const resultMap = new Map<string, ExplainerResult>();
   job?.results.forEach((r) => resultMap.set(r.explainer_name, r));
 
@@ -145,11 +151,11 @@ export default function ControlBox({
                   </button>
                 </div>
                 {(() => {
-                  const activeCount = METRIC_LABELS.filter(({ key }) => (metricWeights[key] ?? 0) > 0).length;
-                  const total = METRIC_LABELS.reduce((s, { key }) => s + (metricWeights[key] ?? 0), 0);
+                  const activeCount = metricLabels.filter(({ key }) => (metricWeights[key] ?? 0) > 0).length;
+                  const total = metricLabels.reduce((s, { key }) => s + (metricWeights[key] ?? 0), 0);
                   return (
                     <div className="flex flex-col gap-2.5">
-                      {METRIC_LABELS.map(({ key, label }) => {
+                      {metricLabels.map(({ key, label }) => {
                         const w = metricWeights[key] ?? 0;
                         const pct = total > 0 ? Math.round((w / total) * 100) : 0;
                         return (
@@ -225,10 +231,10 @@ export default function ControlBox({
 
         {/* 3 metric toggle buttons */}
         {(() => {
-          const activeCount = METRIC_LABELS.filter(({ key }) => (metricWeights[key] ?? 0) > 0).length;
+          const activeCount = metricLabels.filter(({ key }) => (metricWeights[key] ?? 0) > 0).length;
           return (
             <div className="flex gap-1.5">
-              {METRIC_LABELS.map(({ key, label }) => {
+              {metricLabels.map(({ key, label }) => {
                 const active = (metricWeights[key] ?? 0) > 0;
                 const isLast = active && activeCount === 1;
                 return (

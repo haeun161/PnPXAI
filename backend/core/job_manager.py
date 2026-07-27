@@ -6,7 +6,7 @@ import time
 from typing import Any, Optional, Union
 from PIL import Image
 
-from backend.api.schemas import JobStatus, ExplainerResult, PredictionItem
+from backend.api.schemas import JobStatus, ExplainerResult, PredictionItem, ForecastInfo
 
 _jobs: dict[str, dict] = {}
 _data: dict[str, Union[Image.Image, str, bytes]] = {}
@@ -32,6 +32,7 @@ def create_job(job_id: str, task: str, model_name: str, explainer_names: list[st
             "explainer_names": explainer_names,
             "ranking_metric": ranking_metric,
             "predictions": None,
+            "forecast": None,
             "original_data_url": None,
             "results": [],
             "error_message": None,
@@ -78,6 +79,7 @@ def get_job(job_id: str) -> Optional[JobStatus]:
             explainer_names=job["explainer_names"],
             ranking_metric=job.get("ranking_metric", "mu_fidelity"),
             predictions=[PredictionItem(**p) for p in job["predictions"]] if job["predictions"] else None,
+            forecast=ForecastInfo(**job["forecast"]) if job.get("forecast") else None,
             original_data_url=f"/api/jobs/{job_id}/original/{original_file}",
             results=[ExplainerResult(**r) for r in job["results"]],
             error_message=job["error_message"],
@@ -112,6 +114,12 @@ def update_job_predictions(job_id: str, predictions: list[dict]):
     with _lock:
         if job_id in _jobs:
             _jobs[job_id]["predictions"] = predictions
+
+
+def update_job_forecast(job_id: str, forecast: dict):
+    with _lock:
+        if job_id in _jobs:
+            _jobs[job_id]["forecast"] = forecast
 
 
 def update_result_step(job_id: str, explainer_name: str, step: str):

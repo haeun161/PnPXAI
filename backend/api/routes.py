@@ -13,7 +13,7 @@ from backend.core.job_manager import (
     update_job_status, update_job_predictions, update_job_result, request_cancel,
 )
 from backend.core.pipeline import run_explanation_pipeline
-from backend.core import precompute_cache
+from backend.core import precompute_cache, uploaded_models
 from backend.optimizer.optimizer_service import (
     get_explainer_params, run_optimization, run_with_custom_params,
     save_history, get_history, get_history_record, load_record_input_data,
@@ -26,6 +26,7 @@ router = APIRouter(prefix="/api")
 _detect_rank_jobs: dict[str, dict] = {}
 
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB (large CSV time-series support)
+MAX_MODEL_SIZE = 500 * 1024 * 1024  # 500MB (uploaded model weights)
 
 
 @router.get("/tasks", response_model=list[TaskInfo])
@@ -45,7 +46,11 @@ async def get_explainers(task: str = Query(...), model: Optional[str] = Query(No
     model_name = model or (handler.get_models()[0]["name"] if handler.get_models() else "")
     # get_explainers now loads the model + runs pnpxai detection; keep it off the event loop.
     loop = asyncio.get_running_loop()
-    explainers = await loop.run_in_executor(None, handler.get_explainers, model_name)
+    try:
+        explainers = await loop.run_in_executor(None, handler.get_explainers, model_name)
+    except ValueError as e:
+        # Unknown / malformed model name — a client error, not a server fault.
+        raise HTTPException(status_code=400, detail=str(e))
     return [ExplainerInfo(**e) for e in explainers]
 
 
@@ -55,6 +60,7 @@ async def explain(
     model_name: str = Query(...),
     explainer_names: str = Query(..., description="Comma-separated explainer names"),
     ranking_metric: str = Query("average", description="Metric for ranking: average, mu_fidelity, abpc, sensitivity, complexity"),
+    data_name: Optional[str] = Query(None, description="Sample file name, when the data came from the sample list"),
     file: UploadFile = File(...),
 ):
     contents = await file.read()
@@ -116,7 +122,8 @@ async def explain(
                              job_id, task, model_name, file_hash, names, ranking_metric, cached)
     else:
         loop.run_in_executor(None, run_explanation_pipeline,
-                             job_id, task, model_name, names, ranking_metric, {})
+                             job_id, task, model_name, names, ranking_metric,
+                             {"data_name": data_name})
 
     return {"job_id": job_id}
 
@@ -424,6 +431,37 @@ async def get_detect_rank_status(job_id: str):
     return job
 
 
+@router.post("/upload-model")
+async def upload_model(task: str = Query(...), file: UploadFile = File(...)):
+    """Accept a user-supplied weights file and return the name to explain with.
+
+    The upload is loaded once here so a bad file fails at upload time rather than
+    midway through an explanation job.
+    """
+    try:
+        handler = get_task_handler(task)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    contents = await file.read()
+    if len(contents) > MAX_MODEL_SIZE:
+        raise HTTPException(status_code=400, detail="Model file too large. Maximum size is 500MB.")
+
+    model_id = uploaded_models.save(contents)
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, handler.load_model, model_id)
+    except Exception as e:
+        # torch.load's failure text is long and internal; say what the file must look like.
+        detail = (
+            f"Could not load '{file.filename}'. Expected a PyTorch checkpoint saved as "
+            f"{{'state_dict': ..., 'config': ...}} — the config is what tells the server "
+            f"the architecture. ({type(e).__name__})"
+        )
+        raise HTTPException(status_code=400, detail=detail)
+    return {"valid": True, "model_id": model_id, "display_name": file.filename or "uploaded model"}
+
+
 @router.get("/validate-model")
 async def validate_model(task: str = Query(...), hf_model_id: str = Query(...)):
     """Validates a HuggingFace model ID by attempting to load it for the given task."""
@@ -433,7 +471,12 @@ async def validate_model(task: str = Query(...), hf_model_id: str = Query(...)):
         raise HTTPException(status_code=400, detail=str(e))
 
     if task == "timeseries":
-        raise HTTPException(status_code=400, detail="Custom HuggingFace models are not supported for the timeseries task.")
+        # The Hub's time-series models are classifiers; this task is forecast-only, so a
+        # custom model has to arrive as a checkpoint with its own architecture config.
+        raise HTTPException(
+            status_code=400,
+            detail="Time-series models can't be loaded from a URL. Upload a checkpoint file instead.",
+        )
 
     try:
         loop = asyncio.get_running_loop()
@@ -507,30 +550,36 @@ async def get_samples(task: str, model: Optional[str] = Query(None)):
         if name in priority_list:
             return (0, priority_list.index(name))
         return (1, name)
+    # A model trained on specific datasets only offers those. The mapping stays on the
+    # server — the client just receives the already-filtered list. Models that aren't
+    # tied to a dataset (ImageNet/SST-2 classifiers, custom uploads) offer everything.
+    trained_on = None
+    if model:
+        try:
+            handler = get_task_handler(task)
+            trained_on = getattr(handler, "get_model_datasets", lambda m: None)(model)
+        except ValueError:
+            trained_on = None
+
     result = []
     for f in sorted(files, key=_sort_key):
         name = os.path.basename(f)
+        if trained_on is not None and name not in trained_on:
+            continue
         entry: dict = {"name": name, "path": f"/{task}/{name}"}
 
-        # For timeseries, detect channel count and check model compatibility
+        # For timeseries, report the channel count. Every forecaster here embeds each
+        # variate over the time axis, so any channel count runs — nothing to reject.
         if task == "timeseries" and name.endswith(".csv"):
             try:
-                from backend.tasks.timeseries import _parse_ts_csv, _TS_MODELS
+                from backend.tasks.timeseries import _parse_ts_csv
                 with open(f, "rb") as fh:
-                    _, cols, _, _ = _parse_ts_csv(fh.read())
+                    _, cols, _ = _parse_ts_csv(fh.read())
                 entry["channels"] = len(cols)
                 entry["col_names"] = cols
-                if model and model in _TS_MODELS:
-                    default_ch = _TS_MODELS[model].get("default_channels")
-                    if default_ch is not None and default_ch != len(cols):
-                        entry["compatible"] = False
-                        entry["reason"] = f"Model expects {default_ch}-channel, data has {len(cols)}"
-                    else:
-                        entry["compatible"] = True
-                else:
-                    entry["compatible"] = True
             except Exception:
-                entry["compatible"] = True
+                pass
+            entry["compatible"] = True
 
         result.append(entry)
     return result

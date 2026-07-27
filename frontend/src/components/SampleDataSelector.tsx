@@ -1,15 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { TaskType } from "@/lib/types";
-
-interface SampleFile {
-  name: string;
-  path: string;
-  compatible?: boolean;
-  reason?: string;
-  channels?: number;
-  col_names?: string[];
-}
+import { SampleFile, TaskType } from "@/lib/types";
+import { getSamples } from "@/lib/api";
 
 // Dataset descriptions, sources & links
 const SAMPLE_INFO: Record<string, { desc: string; source: string; url?: string; task: string }> = {
@@ -39,61 +31,56 @@ const SAMPLE_INFO: Record<string, { desc: string; source: string; url?: string; 
 interface Props {
   task: TaskType | "";
   model?: string;
-  onSampleSelect: (file: Blob, preview: string) => void;
+  onSampleSelect: (file: Blob, preview: string, name: string) => void;
   disabled?: boolean;
 }
+
+const displayName = (name: string) => name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
 
 export default function SampleDataSelector({ task, model, onSampleSelect, disabled }: Props) {
   const [samples, setSamples] = useState<SampleFile[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState("");
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [infoOpen, setInfoOpen] = useState<string | null>(null);
 
+  // Images and text are small enough to preview as thumbnails. Time-series samples run
+  // to tens of MB, so that task gets a dropdown and nothing is fetched until selection.
+  const usePreviewCards = task === "image" || task === "text";
+
   useEffect(() => {
-    if (!task) { setSamples([]); setSelected(null); setPreviews({}); return; }
-    const url = model ? `/api/samples/${task}?model=${model}` : `/api/samples/${task}`;
-    fetch(url)
-      .then((r) => r.json())
-      .then((data: SampleFile[]) => {
-        setSamples(data);
-        data.forEach(async (s) => {
-          try {
-            const res = await fetch(`/api/samples/${task}/${s.name}`);
-            const blob = await res.blob();
-            if (task === "image") {
-              setPreviews((prev) => ({ ...prev, [s.name]: URL.createObjectURL(blob) }));
-            } else if (task === "text") {
-              const text = await blob.text();
-              setPreviews((prev) => ({ ...prev, [s.name]: text }));
-            } else if (task === "timeseries") {
-              const text = await blob.text();
-              setPreviews((prev) => ({ ...prev, [s.name]: text }));
-            }
-          } catch { /* ignore */ }
-        });
-      })
-      .catch(() => setSamples([]));
+    if (!task) { setSamples([]); setSelected(""); return; }
+    getSamples(task as TaskType, model).then(setSamples).catch(() => setSamples([]));
+    setSelected("");
   }, [task, model]);
+
+  useEffect(() => {
+    if (!usePreviewCards) { setPreviews({}); return; }
+    let cancelled = false;
+    samples.forEach(async (s) => {
+      try {
+        const res = await fetch(`/api/samples/${task}/${s.name}`);
+        const blob = await res.blob();
+        const value = task === "image" ? URL.createObjectURL(blob) : await blob.text();
+        if (!cancelled) setPreviews((prev) => ({ ...prev, [s.name]: value }));
+      } catch { /* ignore */ }
+    });
+    return () => { cancelled = true; };
+  }, [samples, usePreviewCards, task]);
 
   if (!task || samples.length === 0) return null;
 
-  const handleSelect = async (sample: SampleFile) => {
-    if (sample.compatible === false) return;
+  const handleSelect = async (name: string) => {
+    setSelected(name);
+    if (!name) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/samples/${task}/${sample.name}`);
+      const res = await fetch(`/api/samples/${task}/${name}`);
       const blob = await res.blob();
-
-      let preview = sample.name;
-      if (task === "image") {
-        preview = URL.createObjectURL(blob);
-      } else if (task === "text") {
-        preview = await blob.text();
-      }
-
-      setSelected(sample.name);
-      onSampleSelect(blob, preview);
+      const preview = task === "image" ? URL.createObjectURL(blob)
+        : task === "text" ? await blob.text()
+        : name;
+      onSampleSelect(blob, preview, name);
     } catch {
       // ignore
     } finally {
@@ -101,17 +88,16 @@ export default function SampleDataSelector({ task, model, onSampleSelect, disabl
     }
   };
 
-  const displayName = (name: string) => name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
-
-  return (
-    <div className="space-y-2">
+  if (usePreviewCards) {
+    return (
       <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(samples.length, 3)}, 1fr)` }}>
         {samples.map((s) => {
           const isIncompat = s.compatible === false;
+          const info = SAMPLE_INFO[s.name];
           return (
             <button
               key={s.name}
-              onClick={() => handleSelect(s)}
+              onClick={() => handleSelect(s.name)}
               disabled={disabled || loading || isIncompat}
               className={`rounded-lg border p-2 transition-colors text-left ${
                 isIncompat
@@ -122,7 +108,6 @@ export default function SampleDataSelector({ task, model, onSampleSelect, disabl
               } ${disabled ? "opacity-50" : ""}`}
               title={isIncompat ? s.reason : undefined}
             >
-              {/* Preview */}
               {task === "image" && previews[s.name] && (
                 <img src={previews[s.name]} alt={s.name} className="w-full h-16 object-contain rounded mb-1.5" />
               )}
@@ -131,29 +116,7 @@ export default function SampleDataSelector({ task, model, onSampleSelect, disabl
                   {previews[s.name].slice(0, 120)}...
                 </div>
               )}
-              {task === "timeseries" && previews[s.name] && (
-                <div className="w-full h-16 rounded bg-gray-50 border border-gray-100 mb-1.5 flex items-end px-1 pb-1 gap-px overflow-hidden">
-                  {(() => {
-                    const lines = previews[s.name].split("\n").filter((l) => l && !isNaN(parseFloat(l.split(",")[0])));
-                    // Use only first column for preview bar chart
-                    const vals = lines.map((l) => parseFloat(l.split(",")[0])).filter((v) => !isNaN(v));
-                    if (vals.length === 0) return null;
-                    let min = vals[0], max = vals[0];
-                    for (const v of vals) { if (v < min) min = v; if (v > max) max = v; }
-                    const range = max - min || 1;
-                    const step = Math.max(1, Math.floor(vals.length / 30));
-                    const sampled = vals.filter((_, i) => i % step === 0);
-                    return sampled.map((v, i) => (
-                      <div
-                        key={i}
-                        className={`rounded-t-sm flex-1 min-w-[2px] ${isIncompat ? "bg-gray-300" : "bg-blue-400"}`}
-                        style={{ height: `${((v - min) / range) * 100}%`, minHeight: 2 }}
-                      />
-                    ));
-                  })()}
-                </div>
-              )}
-              {/* Label + info + Download */}
+
               <div className="flex items-center justify-between mt-1">
                 <div className="flex-1 min-w-0 flex items-center gap-1">
                   <p className={`text-[10px] capitalize truncate ${
@@ -161,7 +124,7 @@ export default function SampleDataSelector({ task, model, onSampleSelect, disabl
                   }`}>
                     {displayName(s.name)}
                   </p>
-                  {SAMPLE_INFO[s.name] && (
+                  {info && (
                     <div className="relative flex-shrink-0">
                       <span
                         onClick={(e) => { e.stopPropagation(); setInfoOpen(infoOpen === s.name ? null : s.name); }}
@@ -173,62 +136,90 @@ export default function SampleDataSelector({ task, model, onSampleSelect, disabl
                           className="absolute bottom-5 left-0 z-50 w-56 bg-white border border-gray-200 rounded-lg shadow-lg p-2.5 text-left"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <p className="text-[10px] text-gray-700 leading-snug mb-1.5">{SAMPLE_INFO[s.name].desc}</p>
+                          <p className="text-[10px] text-gray-700 leading-snug mb-1.5">{info.desc}</p>
                           <p className="text-[9px] text-gray-500 leading-snug">
                             <span className="font-semibold">Source:</span>{" "}
-                            {SAMPLE_INFO[s.name].url ? (
-                              <a
-                                href={SAMPLE_INFO[s.name].url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-blue-600 hover:text-blue-800 underline"
-                              >
-                                {SAMPLE_INFO[s.name].source} ↗
+                            {info.url ? (
+                              <a href={info.url} target="_blank" rel="noopener noreferrer"
+                                 onClick={(e) => e.stopPropagation()}
+                                 className="text-blue-600 hover:text-blue-800 underline">
+                                {info.source} ↗
                               </a>
                             ) : (
-                              <span>{SAMPLE_INFO[s.name].source}</span>
+                              <span>{info.source}</span>
                             )}
                           </p>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setInfoOpen(null); }}
-                            className="absolute top-1 right-1 text-gray-300 hover:text-gray-500"
-                          >
-                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
                         </div>
                       )}
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  {!isIncompat && (
-                    <a
-                      href={`/api/samples/${task}/${s.name}`}
-                      download={s.name}
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-gray-300 hover:text-gray-600"
-                      title="Download"
-                    >
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                      </svg>
-                    </a>
-                  )}
-                </div>
+                <a
+                  href={`/api/samples/${task}/${s.name}`}
+                  download={s.name}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-gray-300 hover:text-gray-600 flex-shrink-0"
+                  title="Download"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                </a>
               </div>
-              {isIncompat && s.reason && (
-                <p className="text-[8px] text-red-400 truncate">{s.reason}</p>
-              )}
-              {s.channels && s.channels > 1 && !isIncompat && (
-                <p className="text-[8px] text-gray-400 truncate">{s.channels} channels</p>
-              )}
+              {isIncompat && s.reason && <p className="text-[8px] text-red-400 truncate">{s.reason}</p>}
             </button>
           );
         })}
       </div>
+    );
+  }
+
+  const info = selected ? SAMPLE_INFO[selected] : undefined;
+  return (
+    <div className="space-y-2">
+      <select
+        value={selected}
+        onChange={(e) => handleSelect(e.target.value)}
+        disabled={disabled || loading}
+        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+      >
+        <option value="">Choose data...</option>
+        {samples.map((s) => (
+          <option key={s.name} value={s.name} disabled={s.compatible === false}>
+            {displayName(s.name)}
+            {s.channels && s.channels > 1 ? ` (${s.channels} channels)` : ""}
+            {s.compatible === false ? ` — ${s.reason ?? "incompatible"}` : ""}
+          </option>
+        ))}
+      </select>
+
+      {loading && <p className="text-xs text-blue-600 animate-pulse">Loading data...</p>}
+
+      {info && (
+        <p className="text-[10px] text-gray-400 leading-snug">
+          {info.desc}{" "}
+          {info.url ? (
+            <a href={info.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 underline">
+              {info.source} ↗
+            </a>
+          ) : (
+            info.source
+          )}
+        </p>
+      )}
+
+      {selected && (
+        <a
+          href={`/api/samples/${task}/${selected}`}
+          download={selected}
+          className="inline-flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600"
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          Download
+        </a>
+      )}
     </div>
   );
 }

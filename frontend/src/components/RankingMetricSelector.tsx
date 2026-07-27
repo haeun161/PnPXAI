@@ -17,9 +17,11 @@ const ALL_METRICS = [
 ];
 
 export default function RankingMetricSelector({ selected, onSelect, task, disabled }: Props) {
-  const metrics = (task === "text" || task === "timeseries")
-    ? ALL_METRICS.filter((m) => m.value !== "mu_fidelity")
-    : ALL_METRICS;
+  // Time-series drops both classification-only metrics; text keeps AbPC ("Correctness").
+  const excluded = task === "timeseries" ? ["mu_fidelity", "abpc"]
+    : task === "text" ? ["mu_fidelity"]
+    : [];
+  const metrics = ALL_METRICS.filter((m) => !excluded.includes(m.value));
 
   return (
     <div className="space-y-1">

@@ -2,8 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { TaskType } from "@/lib/types";
 import TaskSelector from "@/components/TaskSelector";
-import DataInput from "@/components/DataInput";
-import ModelSelector from "@/components/ModelSelector";
+import ModelDataSelector from "@/components/ModelDataSelector";
 import PredictionInfo from "@/components/PredictionInfo";
 import ResultsPanel from "@/components/ResultsPanel";
 import ControlBox from "@/components/ControlBox";
@@ -62,6 +61,9 @@ function persistState(s: SavedState) {
 export default function Home() {
   const [task, setTask] = useState<TaskType | "">("");
   const [inputData, setInputData] = useState<File | Blob | null>(null);
+  // Sample file name behind `inputData`, so the server can pick the checkpoint trained
+  // on it. Null when the user uploaded their own data.
+  const [dataName, setDataName] = useState<string | null>(null);
   const [model, setModel] = useState("");
   const [explainers, setExplainers] = useState<string[]>([]);
   const [architectures, setArchitectures] = useState<string[]>([]);
@@ -139,6 +141,7 @@ export default function Home() {
     setTask(t as TaskType | "");
     setModel("");
     setInputData(null);
+    setDataName(null);
     resetAll();
   };
 
@@ -155,7 +158,7 @@ export default function Home() {
       const explainerList: { name: string }[] = await explainersRes.json();
       const allNames = explainerList.map((e) => e.name);
       setExplainers(allNames);
-      startJob(task, inputData, model, allNames, "average");
+      startJob(task, inputData, model, allNames, "average", dataName ?? undefined);
 
       const archData = await archRes.json();
       if (archData.detected_architectures?.length) {
@@ -190,8 +193,13 @@ export default function Home() {
           {/* Left Panel */}
           <div className="w-80 flex-shrink-0 flex flex-col gap-2 overflow-y-auto">
             <TaskSelector selected={task} onSelect={handleTaskChange} disabled={busy} />
-            <ModelSelector task={task} selected={model} onSelect={(m) => setModel(m)} disabled={busy} />
-            <DataInput task={task} onDataReady={(data) => setInputData(data)} disabled={busy} />
+            <ModelDataSelector
+              task={task}
+              model={model}
+              onModelSelect={(m) => setModel(m)}
+              onDataReady={(data, _preview, name) => { setInputData(data); setDataName(name ?? null); }}
+              disabled={busy}
+            />
 
             <div className="space-y-2">
               {loading ? (
@@ -268,10 +276,11 @@ export default function Home() {
           <div className="flex-1 min-w-0 flex flex-col gap-4 overflow-hidden">
             {!job && !loading && <WelcomePanel />}
 
-            {job?.predictions && (
+            {(job?.predictions || job?.forecast) && (
               <PredictionInfo
                 dataUrl={job.original_data_url}
                 predictions={job.predictions}
+                forecast={job.forecast}
                 task={job.task}
               />
             )}
