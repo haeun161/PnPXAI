@@ -273,15 +273,22 @@ def _run_text_inference(handler, model, raw_text, model_name):
     return target_class, predictions, input_embeds, input_ids, tokens, wrapper_model
 
 
-def _run_ts_backtest(job_id: str, model, input_tensor: torch.Tensor, input_data: dict) -> torch.Tensor:
-    """Back-test a forecasting model against the tail of the uploaded series and record
-    the result for the Input & Prediction chart.
+def _run_ts_backtest(job_id: str, model, input_tensor: torch.Tensor, input_data: dict,
+                     origin=None) -> torch.Tensor:
+    """Back-test a forecasting model against the series and record the result for the
+    Input & Prediction chart.
 
-    The last `pred_len` points are held out and forecast from the `seq_len` window right
-    before them. That context window is returned and becomes the explainers' input, so
-    the chart and the attributions describe the same single forward pass. When the upload
-    is too short to hold anything out, the horizon simply runs past the end of the data
-    and there is no observed series to compare against.
+    `pred_len` points starting at `origin` are held out and forecast from the `seq_len`
+    window right before them. That context window is returned and becomes the explainers'
+    input, so the chart and the attributions describe the same single forward pass.
+
+    `origin` defaults to the end of the series — hold out the tail, which is all that can
+    be assumed about an arbitrary upload. A bundled sample overrides it with the start of
+    the split its checkpoint was tested on, so the demonstrated forecast is one the model
+    was actually evaluated on rather than whatever the file happens to end with. An origin
+    that would not leave a full context behind it or a full horizon ahead of it is ignored
+    in favour of the default. When even that is impossible the horizon simply runs past
+    the end of the data, and there is no observed series to compare against.
     """
     seq_len = getattr(model, "SEQ_LEN", 96)
     pred_len = getattr(model, "PRED_LEN", 96)
@@ -289,10 +296,13 @@ def _run_ts_backtest(job_id: str, model, input_tensor: torch.Tensor, input_data:
     labels = input_data.get("time_labels")
     timestamps = input_data.get("timestamps")
 
-    has_actual = total >= seq_len + pred_len
+    if origin is not None and not (seq_len <= origin <= total - pred_len):
+        origin = None
+    has_actual = origin is not None or total >= seq_len + pred_len
     if has_actual:
-        ctx_slice = slice(total - seq_len - pred_len, total - pred_len)
-        hz_slice = slice(total - pred_len, total)
+        end = origin if origin is not None else total - pred_len
+        ctx_slice = slice(end - seq_len, end)
+        hz_slice = slice(end, end + pred_len)
     else:
         ctx_slice = slice(max(total - seq_len, 0), total)
         hz_slice = None
@@ -311,9 +321,10 @@ def _run_ts_backtest(job_id: str, model, input_tensor: torch.Tensor, input_data:
     elif has_actual:
         hz_labels = labels[hz_slice]
     elif timestamps is not None and len(timestamps) > 1:
+        from backend.tasks.timeseries import timestamp_format
         step = timestamps[-1] - timestamps[-2]
-        hz_labels = [(timestamps[-1] + step * (i + 1)).strftime("%Y-%m-%d %H:%M")
-                     for i in range(pred_len)]
+        fmt = timestamp_format(timestamps)
+        hz_labels = [(timestamps[-1] + step * (i + 1)).strftime(fmt) for i in range(pred_len)]
     else:
         hz_labels = [f"+{i + 1}" for i in range(pred_len)]
 
@@ -402,7 +413,11 @@ def run_explanation_pipeline(
                 # Time-series is forecast-only: the chart gets a back-test, and the
                 # explainers get the very context window that produced it. There is one
                 # output (the next predicted value), so there is no class to pick.
-                input_tensor = _run_ts_backtest(job_id, model, input_tensor, input_data)
+                from backend.tasks.timeseries import sample_forecast_origin
+                input_tensor = _run_ts_backtest(
+                    job_id, model, input_tensor, input_data,
+                    origin=sample_forecast_origin(params.get("data_name"),
+                                                  input_data.get("timestamps")))
                 target_class = 0
             else:
                 input_tensor = input_data if isinstance(input_data, torch.Tensor) else None

@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -13,146 +12,6 @@ from backend.tasks.base import TaskHandler
 _loaded_models: dict[str, Any] = {}
 
 
-class ITransformerWrapper(torch.nn.Module):
-    """iTransformer long-term forecaster (ETTh1 checkpoint: 96 in -> 96 out).
-
-    Two entry points with deliberately different jobs:
-      * `forward(x)` returns a single scalar per item — the next predicted step of the
-        target channel — so the classification-shaped explainer pipeline can attribute it
-        ("which input timesteps drove the next value").
-      * `forecast_horizon(context)` returns the whole (pred_len, channels) horizon for
-        the Input & Prediction chart.
-
-    The architecture embeds each *variate* over the full time axis, so `seq_len` and
-    `pred_len` are pinned by the weights while the channel count is free — the same
-    checkpoint runs on any number of columns. Values are passed in raw units: the
-    model's internal instance normalization divides out any dataset-level z-scoring
-    and multiplies it back on the way out, so training-set statistics aren't needed.
-
-    Two checkpoint layouts are accepted:
-      * {"state_dict", "config"} — self-describing, so layer sizes and the horizon are
-        read from the file; takes no timestamp covariates.
-      * a bare state_dict — the reference iTransformer, which additionally consumes
-        calendar covariates alongside the variate tokens.
-    """
-    CKPT_NAME = "iTransformer_etth1.pth"
-
-    def __init__(self, ckpt_path=None):
-        super().__init__()
-        from backend.models.itransformer import Model, ITransformerNet
-        # ckpt_path lets a user-uploaded weights file stand in for the bundled one.
-        ckpt_path = Path(ckpt_path) if ckpt_path else local_file("timeseries", self.CKPT_NAME)
-        if not ckpt_path.exists():
-            raise RuntimeError(
-                f"iTransformer checkpoint not found at {ckpt_path}. Place the trained "
-                f"{self.CKPT_NAME} there."
-            )
-        ckpt = torch.load(ckpt_path, map_location="cpu")
-
-        if isinstance(ckpt, dict) and "state_dict" in ckpt and "config" in ckpt:
-            cfg = ckpt["config"]
-            self._model = ITransformerNet(**cfg)
-            self._model.load_state_dict(ckpt["state_dict"])
-            self.SEQ_LEN, self.PRED_LEN = cfg["seq_len"], cfg["pred_len"]
-            self._uses_covariates = False
-        else:
-            cfg = self._infer_reference_config(ckpt)
-            self._model = Model(**cfg)
-            self._model.load_state_dict(ckpt)
-            self.SEQ_LEN, self.PRED_LEN = cfg["seq_len"], cfg["pred_len"]
-            self._uses_covariates = True
-        self._model.eval()
-        # Timestamp covariates for the current request's context window, shaped
-        # (1, SEQ_LEN, 4). Set by set_time_context(); None falls back to no covariates.
-        self._x_mark = None
-
-    @staticmethod
-    def _infer_reference_config(state_dict: dict) -> dict:
-        """Recover the reference iTransformer's layer sizes from the weights themselves.
-
-        A bare state_dict carries no config, and the horizon differs per checkpoint
-        (ETTh1 was trained 96->96, another dataset may be 12->3), so hardcoding a size
-        would silently reject every checkpoint but one. Every dimension except the head
-        count is pinned by a weight shape; heads only re-split an unchanged d_model
-        matrix, so it stays at the reference default of 8.
-        """
-        try:
-            embed = state_dict["enc_embedding.value_embedding.weight"]   # (d_model, seq_len)
-            projector = state_dict["projector.weight"]                   # (pred_len, d_model)
-            d_ff = state_dict["encoder.attn_layers.0.conv1.weight"].shape[0]
-        except KeyError as e:
-            raise RuntimeError(
-                "Unrecognised time-series checkpoint: expected either a reference "
-                f"iTransformer state_dict or a {{'state_dict', 'config'}} file (missing {e})."
-            )
-        e_layers = 1 + max(
-            int(k.split(".")[2]) for k in state_dict if k.startswith("encoder.attn_layers.")
-        )
-        return {
-            "seq_len": embed.shape[1],
-            "pred_len": projector.shape[0],
-            "d_model": embed.shape[0],
-            "d_ff": d_ff,
-            "e_layers": e_layers,
-            "n_heads": 8,
-        }
-
-    def set_time_context(self, timestamps) -> None:
-        """Attach hourly time features for the context window. `timestamps` is a
-        pandas DatetimeIndex of length SEQ_LEN, or None to drop the covariates."""
-        if timestamps is None or not self._uses_covariates:
-            self._x_mark = None
-            return
-        feats = np.stack([
-            timestamps.hour / 23.0 - 0.5,
-            timestamps.dayofweek / 6.0 - 0.5,
-            (timestamps.day - 1) / 30.0 - 0.5,
-            (timestamps.dayofyear - 1) / 365.0 - 0.5,
-        ], axis=1).astype(np.float32)
-        self._x_mark = torch.from_numpy(feats).unsqueeze(0)
-
-    def _fit_window(self, x: torch.Tensor) -> torch.Tensor:
-        """Trim/pad the time axis to exactly SEQ_LEN (the weights fix this length)."""
-        seq_len = x.shape[-1]
-        if seq_len > self.SEQ_LEN:
-            return x[..., -self.SEQ_LEN:]
-        if seq_len < self.SEQ_LEN:
-            pad = x[..., :1].expand(*x.shape[:-1], self.SEQ_LEN - seq_len)
-            return torch.cat([pad, x], dim=-1)
-        return x
-
-    def _run(self, x: torch.Tensor) -> torch.Tensor:
-        """x: (batch, channels, seq_len) -> (batch, pred_len, channels)."""
-        x_enc = self._fit_window(x).transpose(1, 2)
-        if not self._uses_covariates:
-            return self._model(x_enc)
-        x_mark = None
-        if self._x_mark is not None:
-            x_mark = self._x_mark.to(x.device, x.dtype).expand(x.shape[0], -1, -1)
-        return self._model(x_enc, x_mark)
-
-    @staticmethod
-    def channel_for(num_channels: int) -> int:
-        """The forecast target is always the last column of the upload, by convention —
-        which is where ETT-style CSVs put it (OT) and where the checkpoint's own
-        feature_names put the label. Deriving it from the data rather than from the
-        checkpoint keeps any dataset working without per-file configuration."""
-        return max(num_channels - 1, 0)
-
-    def forward(self, x):
-        # Single always-selected pseudo-class, so softmax/argmax downstream stay valid.
-        out = self._run(x)
-        ch = self.channel_for(out.shape[-1])
-        return out[:, 0, ch:ch + 1]
-
-    @torch.no_grad()
-    def forecast_horizon(self, context: torch.Tensor) -> torch.Tensor:
-        """context: (channels, seq_len) or (1, channels, seq_len) -> (pred_len, channels)."""
-        if context.dim() == 2:
-            context = context.unsqueeze(0)
-        return self._run(context)[0]
-
-
 # One entry per architecture, not per checkpoint: the picker shows "iTransformer" once,
 # and `checkpoints` maps each sample dataset to the weights trained on it, so choosing
 # the data chooses the model. Backend-only — the frontend receives an already-filtered
@@ -165,12 +24,59 @@ _TS_MODELS = {
         "description": "Long-term forecaster. Embeds each variate over the time axis, so "
                        "it runs on any channel count; the input/forecast window is read "
                        "from the checkpoint trained on the selected dataset.",
+        # Candidates in preference order — models/timeseries is a volume shared with
+        # another server, where files get replaced and removed mid-session, so naming a
+        # single file means a deleted one takes the sample down.
         "checkpoints": {
-            "ETTh1.csv": "iTransformer_etth1.pth",
-            "illness.csv": "iTransformer_illness.pth",
+            # The shared ETTh1 weights (24 in -> 5 out), by request; our own 96->96 run
+            # was removed from the volume. Window lengths come from the file, so a swap
+            # there changes the sample's horizon without any change here.
+            "ETTh1.csv": ["iTransformer_etth1.pth"],
+            "illness.csv": ["iTransformer_illness.pth"],
         },
     },
 }
+
+
+# Where a bundled sample's demonstrated forecast should start. Without an entry the
+# forecast holds out the tail of the file, which is all that can be assumed about an
+# arbitrary upload; with one, the sample opens on a chosen date instead.
+_SAMPLE_FORECAST_START = {
+    "illness.csv": "2020-03-03",
+}
+
+
+def sample_forecast_origin(data_name, timestamps):
+    """Row the forecast horizon should start at for a bundled sample, or None for the
+    default (hold out the tail of whatever was uploaded).
+
+    Resolved against the file's own timestamps rather than stored as a row number, so the
+    date stays the date if rows are ever added or removed. `searchsorted` rather than an
+    equality test: it lands on the first row at or after the requested date, so a date
+    that falls between samples still resolves instead of silently reverting to the tail.
+    """
+    start = _SAMPLE_FORECAST_START.get(data_name)
+    if start is None or timestamps is None or len(timestamps) == 0:
+        return None
+    index = int(timestamps.searchsorted(pd.Timestamp(start)))
+    return index if index < len(timestamps) else None
+
+
+def timestamp_format(timestamps) -> str:
+    """Shortest strftime format that still tells these timestamps apart.
+
+    Daily and weekly series sit at midnight, where a "00:00" on every label is pure
+    noise — and on a short context window it is the difference between axis labels that
+    fit side by side and labels that collide into an unreadable smear.
+    """
+    if len(timestamps) and (timestamps.hour == 0).all() and (timestamps.minute == 0).all():
+        return "%Y-%m-%d"
+    return "%Y-%m-%d %H:%M"
+
+
+def format_timestamps(timestamps) -> list[str]:
+    fmt = timestamp_format(timestamps)
+    return [t.strftime(fmt) for t in timestamps]
 
 
 def _parse_time_column(time_series: pd.Series) -> list[str]:
@@ -247,7 +153,7 @@ def _parse_ts_csv(raw_bytes: bytes, with_timestamps: bool = False):
                     parsed = pd.to_datetime(df[col], errors="coerce")
                     if parsed.notna().all():
                         timestamps = pd.DatetimeIndex(parsed)
-                        time_labels = [t.strftime("%Y-%m-%d %H:%M") for t in timestamps]
+                        time_labels = format_timestamps(timestamps)
                     else:
                         time_labels = _parse_time_column(df[col])
                 drop_cols.append(col)
@@ -305,29 +211,37 @@ class TimeSeriesTaskHandler(TaskHandler):
 
     def load_model(self, model_name: str, num_input_channels: int = 1,
                    dataset: Optional[str] = None) -> torch.nn.Module:
+        """Resolve a model name to a loaded forecaster.
+
+        Three kinds of name arrive here: a bundled preset, `upload:<id>` for a checkpoint
+        the user supplied (by file or by URL — both land in the same store), and anything
+        else, which is taken as a HuggingFace repo id. Only the presets are iTransformer;
+        the other two are whatever the user brought, so the architecture is decided by
+        backend.models.ts_loading rather than assumed here.
+        """
+        from backend.models.ts_loading import load_forecaster
+
         if model_name in _TS_MODELS:
             checkpoints = _TS_MODELS[model_name]["checkpoints"]
             # The chosen dataset selects the weights trained on it. Explainer detection
             # runs before any data is picked and only probes the architecture, which every
             # checkpoint shares, so an unknown dataset can answer with any of them.
-            filename = checkpoints.get(dataset) or next(iter(checkpoints.values()))
-            ckpt_path = local_file("timeseries", filename)
+            candidates = checkpoints.get(dataset) or next(iter(checkpoints.values()))
+            paths = [local_file("timeseries", name) for name in candidates]
+            # First candidate that is actually on disk; falling back to the first keeps
+            # the "checkpoint not found" error pointing at the preferred name rather than
+            # the last one tried.
+            source = next((p for p in paths if p.exists()), paths[0])
         elif uploaded_models.is_upload(model_name):
-            # User-supplied weights. Only the self-describing {state_dict, config}
-            # layout is loadable — a bare state_dict carries no architecture.
-            ckpt_path = uploaded_models.path_for(model_name)
+            source = uploaded_models.path_for(model_name)
         else:
-            raise ValueError(
-                f"Unknown timeseries model: {model_name}. Pick a preset or upload a "
-                f"checkpoint."
-            )
-        # Key on the checkpoint, not the model name — one name now spans several files.
-        cache_key = f"{ckpt_path}_{num_input_channels}"
+            source = model_name
+
+        # Key on the source, not the model name — one preset name spans several files.
+        cache_key = f"{source}_{num_input_channels}"
         from backend.core.device import to_device
         if cache_key not in _loaded_models:
-            model = ITransformerWrapper(ckpt_path=ckpt_path)
-            model.eval()
-            _loaded_models[cache_key] = model
+            _loaded_models[cache_key] = load_forecaster(source, num_channels=num_input_channels)
         return to_device(_loaded_models[cache_key])
 
     def preprocess_input(self, raw_data: Any) -> Any:

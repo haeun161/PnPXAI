@@ -72,8 +72,11 @@ function ForecastChart({ forecast }: { forecast: ForecastInfo }) {
   return (
     <div className="w-full">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1.5 text-xs text-gray-600">
+        {/* Swatches name the lines; the window lengths get their own group after a
+            divider, under the parameter names they are set by. A bare "Input (96)" left
+            the reader to guess what the number counted. */}
         <span className="flex items-center gap-1.5">
-          <span className="inline-block w-4 h-1 bg-gray-400" /> Input ({ctxLen})
+          <span className="inline-block w-4 h-1 bg-gray-400" /> Input
         </span>
         {actual && (
           <span className="flex items-center gap-1.5">
@@ -82,7 +85,14 @@ function ForecastChart({ forecast }: { forecast: ForecastInfo }) {
         )}
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-4 h-0 border-t-2 border-dashed border-red-500" aria-hidden />
-          Predicted ({predicted.length})
+          Predicted
+        </span>
+        <span className="text-gray-300">|</span>
+        <span>
+          seq_len = <span className="font-bold text-gray-900">{ctxLen}</span>
+        </span>
+        <span>
+          pred_len = <span className="font-bold text-gray-900">{predicted.length}</span>
         </span>
         {mae !== null && mape !== null && (
           <>

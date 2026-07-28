@@ -452,14 +452,127 @@ async def upload_model(task: str = Query(...), file: UploadFile = File(...)):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, handler.load_model, model_id)
     except Exception as e:
-        # torch.load's failure text is long and internal; say what the file must look like.
-        detail = (
-            f"Could not load '{file.filename}'. Expected a PyTorch checkpoint saved as "
-            f"{{'state_dict': ..., 'config': ...}} — the config is what tells the server "
-            f"the architecture. ({type(e).__name__})"
-        )
-        raise HTTPException(status_code=400, detail=detail)
+        # The loaders already explain what they could and couldn't read; torch's own
+        # failure text is long and internal, so only fall back to it if there's nothing.
+        raise HTTPException(status_code=400, detail=str(e) or f"Could not load '{file.filename}'.")
     return {"valid": True, "model_id": model_id, "display_name": file.filename or "uploaded model"}
+
+
+# Weights filenames a HuggingFace repo might hold, best first.
+_HF_WEIGHT_FILES = ("model.safetensors", "pytorch_model.bin", "model.pt", "model.pth")
+
+
+def _hf_repo_id(url: str):
+    """The `org/name` a HuggingFace *repo* reference names, or None for anything else.
+
+    Accepts both a pasted repo URL and a bare `org/name`. A link that already points at a
+    file inside a repo (`/resolve/`, `/blob/`) is not a repo reference — that one wants
+    downloading, not from_pretrained.
+    """
+    from urllib.parse import urlparse
+
+    if not url.lower().startswith(("http://", "https://")):
+        parts = [p for p in url.split("/") if p]
+        return "/".join(parts) if len(parts) == 2 else None
+    parsed = urlparse(url)
+    if parsed.hostname not in ("huggingface.co", "www.huggingface.co"):
+        return None
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) == 2 and not {"resolve", "blob"} & set(parts):
+        return "/".join(parts)
+    return None
+
+
+def _hf_repo_files(repo: str) -> list:
+    """Filenames a HuggingFace repo holds."""
+    import json
+    import urllib.request
+
+    api = urllib.request.Request(f"https://huggingface.co/api/models/{repo}",
+                                 headers={"User-Agent": "PnPXAI"})
+    with urllib.request.urlopen(api, timeout=30) as resp:
+        info = json.load(resp)
+    return [s["rfilename"] for s in info.get("siblings", [])]
+
+
+def _download_checkpoint(url: str) -> bytes:
+    """Fetch a checkpoint file from a URL, capped at MAX_MODEL_SIZE."""
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "PnPXAI"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        chunks, total = [], 0
+        while True:
+            chunk = resp.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_MODEL_SIZE:
+                raise ValueError("Checkpoint file too large. Maximum size is 500MB.")
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _load_ts_model_from_url(handler, url: str):
+    """Load a forecaster named by a URL: a HuggingFace repo, or a link to a weights file.
+
+    A repo is handed to the handler by id so transformers can fetch config.json alongside
+    the weights — the config is what says which architecture to rebuild. A file link is
+    downloaded and registered as if it had been uploaded, which is also how repos that
+    hold a bare checkpoint (no config.json, so nothing for from_pretrained to read) are
+    handled.
+    """
+    url = url.strip()
+    loop = asyncio.get_running_loop()
+    repo = _hf_repo_id(url)
+
+    if repo:
+        try:
+            files = await loop.run_in_executor(None, _hf_repo_files, repo)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not read the repo '{repo}': {e}")
+        if "config.json" in files:
+            try:
+                await loop.run_in_executor(None, handler.load_model, repo)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=str(e) or f"Could not load '{repo}'.")
+            return {"valid": True, "model_id": repo, "display_name": repo.split("/")[-1]}
+        weights = (next((n for n in _HF_WEIGHT_FILES if n in files), None)
+                   or next((n for n in files if n.endswith((".pth", ".pt", ".safetensors", ".bin"))), None))
+        if weights is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{repo}' holds no weights file (found: {', '.join(files) or 'nothing'}).",
+            )
+        url = f"https://huggingface.co/{repo}/resolve/main/{weights}"
+    elif not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=400,
+            detail="Paste a HuggingFace model URL (huggingface.co/org/name) or a direct "
+                   "link to a checkpoint file.",
+        )
+    else:
+        # A file *page* on the Hub serves HTML; its raw counterpart is under /resolve/.
+        url = url.replace("/blob/", "/resolve/")
+
+    try:
+        contents = await loop.run_in_executor(None, _download_checkpoint, url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not download checkpoint from URL: {e}")
+
+    if contents[:512].lstrip().lower().startswith((b"<!doctype", b"<html")):
+        raise HTTPException(
+            status_code=400,
+            detail="That URL returned a web page, not a file. Link the checkpoint itself "
+                   "(on HuggingFace, the file's Download button).",
+        )
+
+    model_id = uploaded_models.save(contents)
+    try:
+        await loop.run_in_executor(None, handler.load_model, model_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e) or f"Could not load {url}.")
+    display_name = os.path.basename(url.split("?")[0]) or "checkpoint from URL"
+    return {"valid": True, "model_id": model_id, "display_name": display_name}
 
 
 @router.get("/validate-model")
@@ -471,12 +584,9 @@ async def validate_model(task: str = Query(...), hf_model_id: str = Query(...)):
         raise HTTPException(status_code=400, detail=str(e))
 
     if task == "timeseries":
-        # The Hub's time-series models are classifiers; this task is forecast-only, so a
-        # custom model has to arrive as a checkpoint with its own architecture config.
-        raise HTTPException(
-            status_code=400,
-            detail="Time-series models can't be loaded from a URL. Upload a checkpoint file instead.",
-        )
+        # Forecasters come in two shapes the image/text path never sees: a transformers
+        # repo, and a plain checkpoint file. Which one this is decides how to load it.
+        return await _load_ts_model_from_url(handler, hf_model_id)
 
     try:
         loop = asyncio.get_running_loop()

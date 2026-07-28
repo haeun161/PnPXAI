@@ -37,14 +37,7 @@ export default function TimeSeriesInput({ onDataReady, disabled }: Props) {
   return (
     <div className="space-y-2">
       {/* no label - tab already indicates this is upload */}
-      <input
-        value={values}
-        onChange={(e) => handleValuesChange(e.target.value)}
-        placeholder="Enter comma-separated values: 1.2, 3.4, 5.6, ..."
-        disabled={disabled}
-        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
-      />
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1">
         <button
           onClick={() => inputRef.current?.click()}
           disabled={disabled}

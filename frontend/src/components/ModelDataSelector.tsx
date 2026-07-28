@@ -19,12 +19,22 @@ interface Props {
 type Mode = "sample" | "custom";
 type Status = "idle" | "loading" | "success" | "error";
 
-// Time-series is absent on purpose: the task is forecast-only, while the Hub's
-// time-series models are classifiers — a custom forecaster has to be uploaded as a
-// checkpoint carrying its own architecture config.
-const HF_EXAMPLES: Record<string, string> = {
-  image: "https://huggingface.co/microsoft/resnet-50",
-  text: "https://huggingface.co/distilbert/distilbert-base-uncased-finetuned-sst-2-english",
+// For image/text the URL box takes a HuggingFace model page. Time series accepts that too
+// (a *ForPrediction repo is loaded with transformers) and additionally a direct link to a
+// checkpoint file, which the server downloads and treats like an upload.
+const URL_FIELD: Record<string, { placeholder: string; hint: string }> = {
+  image: {
+    placeholder: "Input HuggingFace model URL",
+    hint: "ex. https://huggingface.co/microsoft/resnet-50",
+  },
+  text: {
+    placeholder: "Input HuggingFace model URL",
+    hint: "ex. https://huggingface.co/distilbert/distilbert-base-uncased-finetuned-sst-2-english",
+  },
+  timeseries: {
+    placeholder: "Input HuggingFace or checkpoint URL",
+    hint: "ex. https://huggingface.co/ibm-granite/granite-timeseries-patchtst — or link a .pth/.pt file directly",
+  },
 };
 
 function parseHfModelId(input: string): string {
@@ -100,7 +110,9 @@ export default function ModelDataSelector({ task, model, onModelSelect, onDataRe
   };
 
   const handleHfLoad = async () => {
-    const id = parseHfModelId(hfInput);
+    // Time-series URLs point at a checkpoint file, not a Hub model page — pass them
+    // through untouched so the server can download the file itself.
+    const id = task === "timeseries" ? hfInput.trim() : parseHfModelId(hfInput);
     if (!id) return;
     setModelStatus("loading");
     setModelError("");
@@ -115,7 +127,7 @@ export default function ModelDataSelector({ task, model, onModelSelect, onDataRe
     }
   };
 
-  const hfExample = HF_EXAMPLES[task];
+  const urlField = URL_FIELD[task];
 
   const tabClass = (active: boolean) =>
     `flex-1 text-xs py-2 font-medium transition-colors ${
@@ -175,23 +187,25 @@ export default function ModelDataSelector({ task, model, onModelSelect, onDataRe
           ) : (
             <>
               <div className="space-y-1">
-                <p className="text-[11px] font-medium text-gray-500 uppercase">Model</p>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".pth,.pt,.bin,.safetensors"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleWeightsUpload(f); }}
-                  disabled={disabled || modelStatus === "loading"}
-                  className="w-full text-xs text-gray-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 file:text-xs file:font-medium hover:file:bg-blue-100 disabled:opacity-50"
-                />
-                {hfExample && (
+                <div className="flex items-center gap-2">
+                  <p className="text-[11px] font-medium text-gray-500 uppercase shrink-0">Model</p>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept=".pth,.pt,.bin,.safetensors"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleWeightsUpload(f); }}
+                    disabled={disabled || modelStatus === "loading"}
+                    className="flex-1 min-w-0 text-xs text-gray-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 file:text-xs file:font-medium hover:file:bg-blue-100 disabled:opacity-50"
+                  />
+                </div>
+                {urlField && (
                   <div className="flex gap-2 pt-1">
                     <input
                       type="text"
                       value={hfInput}
                       onChange={(e) => setHfInput(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleHfLoad()}
-                      placeholder="…or a HuggingFace model URL"
+                      placeholder={urlField.placeholder}
                       disabled={disabled || modelStatus === "loading"}
                       className="flex-1 min-w-0 rounded-lg border border-gray-300 px-2 py-1.5 text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
                     />
@@ -211,8 +225,8 @@ export default function ModelDataSelector({ task, model, onModelSelect, onDataRe
                 {modelStatus === "error" && <p className="text-xs text-red-600">{modelError}</p>}
                 {modelStatus === "idle" && (
                   <p className="text-[10px] text-gray-400 break-all">
-                    {hfExample
-                      ? `e.g. ${hfExample}`
+                    {urlField
+                      ? urlField.hint
                       : "Checkpoint saved as {'state_dict': ..., 'config': ...}"}
                   </p>
                 )}
