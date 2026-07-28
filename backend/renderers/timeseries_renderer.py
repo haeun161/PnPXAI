@@ -8,6 +8,31 @@ from matplotlib.colorbar import ColorbarBase
 # Beyond this, users can download the full attribution as Excel.
 MAX_VIZ_VARIABLES = 15  # K — change this to adjust the limit
 
+# Only the top (1 - ATTR_QUANTILE) of |attribution| is drawn; everything below is left
+# blank. A quantile rather than a fixed cutoff because attribution is rescaled per
+# explanation, so no absolute number means the same thing twice; this keeps the amount of
+# ink steady across explainers instead of flooding one plot and leaving another bare.
+ATTR_QUANTILE = 0.90
+
+
+def _attribution_threshold(attr: np.ndarray) -> float:
+    """|attribution| a cell has to reach to be drawn at all.
+
+    Global across channels, so a channel that barely matters stays blank rather than
+    being coloured at its own relative best.
+
+    Cells with exactly zero attribution are left out of the quantile. They are not weak
+    contributions, they are the absence of one: a channel-independent model gives every
+    variate but the target a flat zero, which drags the 90th percentile down far enough
+    to keep most of the target channel coloured. Ranking only what was actually
+    attributed makes "the top decile" mean the top decile.
+    """
+    magnitude = np.abs(attr)
+    attributed = magnitude[magnitude > 0]
+    if attributed.size == 0:
+        return 0.0
+    return float(np.quantile(attributed, ATTR_QUANTILE))
+
 
 def _normalize_attr(attr, signals):
     """Reshape attribution to the signal grid and scale it so ±1 is a strong contribution.
@@ -56,8 +81,37 @@ _ATTR_CMAP = mcolors.LinearSegmentedColormap.from_list(
 # the ramp instead of being mapped past it.
 _ATTR_NORM = mcolors.Normalize(vmin=-1, vmax=1, clip=True)
 
+_WHITE = mcolors.to_rgba("white")
 
-def _plot_single(ax, signal, attr, col_name, x, rank=None, show_xlabel=True, time_labels=None):
+
+def _strip_color(value: float, threshold):
+    """Fill for one timestep's strip, blank below the threshold.
+
+    Colouring every cell spends the reader's attention on the 90% of the window that was
+    not being singled out anyway. Blanking those leaves the plot saying one thing: here is
+    the top decile, and here is which way it pushed.
+    """
+    if threshold is not None and abs(value) < threshold:
+        return _WHITE
+    return _ATTR_CMAP(_ATTR_NORM(value))
+
+
+def _dead_zone_cmap(threshold: float):
+    """The ramp with its centre blanked out, so the colourbar shows what the strips draw.
+
+    Without this the bar promises a smooth gradient through white at zero while the plot
+    actually blanks a whole band around zero — and white would be reading as both "no
+    influence" and "below the cut". Drawing the dead zone makes white mean exactly one
+    thing, "outside the top decile", with zero simply living inside that band.
+    """
+    values = np.linspace(-1, 1, 256)
+    colors = _ATTR_CMAP(_ATTR_NORM(values))
+    colors[np.abs(values) < threshold] = _WHITE
+    return mcolors.ListedColormap(colors)
+
+
+def _plot_single(ax, signal, attr, col_name, x, rank=None, show_xlabel=True, time_labels=None,
+                 threshold=None):
     """Plot one variable over a background shaded by its attribution."""
     # Long series: one strip per block of samples instead of per sample, or the number of
     # patches makes rendering crawl.
@@ -72,7 +126,7 @@ def _plot_single(ax, signal, attr, col_name, x, rank=None, show_xlabel=True, tim
     half = (x[1] - x[0]) / 2 if len(x) > 1 else 0.5
     for i in range(len(x)):
         ax.axvspan(x[i] - half, x[i] + half,
-                   color=_ATTR_CMAP(_ATTR_NORM(attr[i])), linewidth=0)
+                   color=_strip_color(attr[i], threshold), linewidth=0)
     ax.plot(x, signal, color="black", linewidth=1.3, zorder=5)
     ax.set_xlim(x[0] - half, x[-1] + half)
 
@@ -88,11 +142,19 @@ def _plot_single(ax, signal, attr, col_name, x, rank=None, show_xlabel=True, tim
 
     # Ticks are placed in data coordinates, which are the original timestep numbers —
     # they no longer match positions in the array once the series has been thinned.
-    n_ticks = min(10, len(x))
-    tick_idx = np.linspace(0, len(x) - 1, n_ticks, dtype=int)
+    #
+    # A short window gets a tick on every timestep. One strip is drawn per timestep, so
+    # labelling only a subset leaves strips the reader can't name — and because the
+    # subset is picked by rounding evenly-spaced floats, the survivors end up at uneven
+    # spacing (a 12-step window kept steps 0-4, 6-9, 11), which reads as a plotting bug.
+    n_ticks = len(x) if len(x) <= 24 else 10
+    tick_idx = list(np.linspace(0, len(x) - 1, n_ticks, dtype=int))
     ax.set_xticks([x[i] for i in tick_idx])
     if time_labels is not None and len(time_labels) == len(x):
-        ax.set_xticklabels([time_labels[i] for i in tick_idx], fontsize=6, color="black", rotation=30, ha="right")
+        # Few enough ticks to have room: draw them large enough to actually read.
+        size = 8 if len(tick_idx) <= 16 else 6
+        ax.set_xticklabels([time_labels[i] for i in tick_idx], fontsize=size, color="black",
+                           rotation=30, ha="right")
     else:
         ax.set_xticklabels([str(int(x[i])) for i in tick_idx], fontsize=7, color="black")
 
@@ -100,11 +162,15 @@ def _plot_single(ax, signal, attr, col_name, x, rank=None, show_xlabel=True, tim
         ax.set_xlabel("Time" if time_labels else "Time Steps", fontsize=9, color="black")
 
 
-def _add_colorbar(fig, bottom_margin=0.06):
-    """Add a horizontal colorbar well below the plots."""
+def _add_colorbar(fig, bottom_margin=0.06, threshold=None):
+    """Add a horizontal colorbar well below the plots, blanked wherever the strips are."""
     cbar_ax = fig.add_axes([0.2, bottom_margin - 0.04, 0.6, 0.012])
-    cb = ColorbarBase(cbar_ax, cmap=_ATTR_CMAP, norm=_ATTR_NORM, orientation="horizontal")
-    cb.set_label("Attribution  (− pushes down / + pushes up)", fontsize=8, color="black", labelpad=4)
+    cmap = _dead_zone_cmap(threshold) if threshold else _ATTR_CMAP
+    cb = ColorbarBase(cbar_ax, cmap=cmap, norm=_ATTR_NORM, orientation="horizontal")
+    label = "Attribution  (− pushes down / + pushes up)"
+    if threshold:
+        label += "      white = outside the top 10%, not drawn"
+    cb.set_label(label, fontsize=8, color="black", labelpad=4)
     cb.ax.tick_params(labelsize=7, colors="black")
 
 
@@ -114,6 +180,7 @@ def render_timeseries_attribution(
     output_path: str,
     col_names: list[str] | None = None,
     time_labels: list[str] | None = None,
+    display_name: str | None = None,
 ) -> str:
     """Render time-series attribution as background colour strips (cyan→magenta).
 
@@ -151,14 +218,21 @@ def render_timeseries_attribution(
     # the plots and the colorbar — without extra room the two overlap.
     has_time_labels = time_labels is not None and len(time_labels) == seq_len
 
+    title = display_name or "Attribution"
+    # Computed once over every channel and reused by all three outputs, so the main view,
+    # the expanded view and the per-variable PNGs mark the same timesteps — including the
+    # views that only draw the top few channels.
+    threshold = _attribution_threshold(attr)
+
     if num_channels == 1:
         fig_height = 3.2
         fig, ax = plt.subplots(figsize=(_fig_width(fig_height), fig_height), dpi=100)
-        _plot_single(ax, signals[0], attr[0], col_names[0], x, time_labels=time_labels)
-        ax.set_title("Time-Series Attribution", fontsize=12, fontweight="bold", color="black")
-        bottom = 0.34 if has_time_labels else 0.18
+        _plot_single(ax, signals[0], attr[0], col_names[0], x, time_labels=time_labels,
+                     threshold=threshold)
+        ax.set_title(title, fontsize=12, fontweight="bold", color="black")
+        bottom = (1.5 if has_time_labels else 0.7) / fig_height
         fig.subplots_adjust(bottom=bottom)
-        _add_colorbar(fig, bottom_margin=bottom * 0.55)
+        _add_colorbar(fig, bottom_margin=0.34 / fig_height, threshold=threshold)
     else:
         show_n = min(num_channels, 3)
         fig_height = 1.7 * show_n + 0.9
@@ -169,30 +243,38 @@ def render_timeseries_attribution(
         for i, ax in enumerate(axes):
             ch = sorted_idx[i]
             is_last = (i == show_n - 1)
-            _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=i + 1, show_xlabel=is_last, time_labels=time_labels)
+            _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=i + 1,
+                         show_xlabel=is_last, time_labels=time_labels, threshold=threshold)
             if i == 0:
-                extra = f" (top {show_n} of {num_channels})" if num_channels > 3 else ""
-                ax.set_title(f"Attribution by Variable{extra}", fontsize=12, fontweight="bold", color="black")
+                ax.set_title(title, fontsize=12, fontweight="bold", color="black")
 
-        bottom = 0.24 if has_time_labels else 0.10
+        # Reserved in inches rather than as a fraction: the strip below the plots holds
+        # rotated timestamps plus the axis title, whose height is set by the font, not by
+        # how tall the figure happens to be. As a fraction they collided with the colorbar
+        # as soon as the labels were full timestamps.
+        bottom = (1.7 if has_time_labels else 0.8) / fig_height
         fig.subplots_adjust(bottom=bottom)
-        _add_colorbar(fig, bottom_margin=bottom * 0.5)
+        _add_colorbar(fig, bottom_margin=0.34 / fig_height, threshold=threshold)
 
         # Expanded view
         expanded_path = output_path.replace(".png", "_expanded.png")
-        _render_expanded(signals, attr, col_names, sorted_idx, expanded_path, time_labels=time_labels)
+        _render_expanded(signals, attr, col_names, sorted_idx, expanded_path,
+                         time_labels=time_labels, display_name=display_name, threshold=threshold)
 
         # ZIP bundle: individual variable PNGs + Excel data
         zip_path = output_path.replace(".png", "_bundle.zip")
-        _create_bundle_zip(signals, attr, col_names, sorted_idx, channel_importance, x, zip_path, time_labels=time_labels)
+        _create_bundle_zip(signals, attr, col_names, sorted_idx, channel_importance, x, zip_path,
+                           time_labels=time_labels, threshold=threshold)
 
     fig.savefig(output_path, bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
     return output_path
 
 
-def _render_expanded(signals, attr, col_names, sorted_idx, output_path, time_labels=None):
-    """Render top K variables in a 5-row × 3-col grid, sorted by importance."""
+def _render_expanded(signals, attr, col_names, sorted_idx, output_path, time_labels=None,
+                     display_name=None, threshold=None):
+    """Render top K variables (all of them, up to MAX_VIZ_VARIABLES) in a single column,
+    sorted by importance."""
     num_channels = signals.shape[0]
     show_n = min(num_channels, MAX_VIZ_VARIABLES)
     # One variable per row: every channel gets the full width, and they share a time axis
@@ -207,22 +289,22 @@ def _render_expanded(signals, attr, col_names, sorted_idx, output_path, time_lab
         ax = axes_flat[i]
         ch = sorted_idx[i]
         _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=i + 1,
-                     show_xlabel=(i == show_n - 1), time_labels=time_labels)
+                     show_xlabel=(i == show_n - 1), time_labels=time_labels, threshold=threshold)
         if i == 0:
-            extra = f" (top {show_n} of {num_channels})" if num_channels > show_n else ""
-            ax.set_title(f"All Variables — Ranked by Importance{extra}", fontsize=11, fontweight="bold", color="black")
+            ax.set_title(display_name or "Attribution", fontsize=11, fontweight="bold", color="black")
 
     # The figure grows with the channel count, so reserve the space below the last plot in
     # inches — a fixed fraction would balloon into a huge gap once there are many rows.
     has_time_labels = time_labels is not None and len(time_labels) == signals.shape[-1]
-    bottom = (1.5 if has_time_labels else 0.7) / fig_height
+    bottom = (1.7 if has_time_labels else 0.8) / fig_height
     fig.subplots_adjust(bottom=bottom, hspace=0.3)
-    _add_colorbar(fig, bottom_margin=bottom * 0.5)
+    _add_colorbar(fig, bottom_margin=0.34 / fig_height, threshold=threshold)
     fig.savefig(output_path, bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
 
 
-def _create_bundle_zip(signals, attr, col_names, sorted_idx, channel_importance, x, zip_path, time_labels=None):
+def _create_bundle_zip(signals, attr, col_names, sorted_idx, channel_importance, x, zip_path,
+                       time_labels=None, threshold=None):
     """Create a ZIP bundle with individual variable PNGs + Excel data."""
     import zipfile
     import tempfile
@@ -239,10 +321,11 @@ def _create_bundle_zip(signals, attr, col_names, sorted_idx, channel_importance,
             fname = f"#Rank{rank}_{safe_name}.png"
 
             fig, ax = plt.subplots(figsize=(8, 4.5), dpi=100)
-            _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=rank, time_labels=time_labels)
+            _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=rank,
+                         time_labels=time_labels, threshold=threshold)
             ax.set_title(f"#{rank} {col_names[ch]} — Attribution", fontsize=12, fontweight="bold", color="black", pad=10)
             fig.subplots_adjust(bottom=0.22, top=0.88, left=0.12, right=0.92)
-            _add_colorbar(fig, bottom_margin=0.08)
+            _add_colorbar(fig, bottom_margin=0.08, threshold=threshold)
             fig.savefig(os.path.join(img_dir, fname), bbox_inches="tight", pad_inches=0.15)
             plt.close(fig)
 

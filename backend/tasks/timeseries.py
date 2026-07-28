@@ -97,19 +97,24 @@ class ITransformerWrapper(torch.nn.Module):
             "n_heads": 8,
         }
 
+    @staticmethod
+    def _time_features(timestamps) -> np.ndarray:
+        """Hourly calendar features for one context window. `timestamps` is a pandas
+        DatetimeIndex of length SEQ_LEN. Returns (SEQ_LEN, 4)."""
+        return np.stack([
+            timestamps.hour / 23.0 - 0.5,
+            timestamps.dayofweek / 6.0 - 0.5,
+            (timestamps.day - 1) / 30.0 - 0.5,
+            (timestamps.dayofyear - 1) / 365.0 - 0.5,
+        ], axis=1).astype(np.float32)
+
     def set_time_context(self, timestamps) -> None:
         """Attach hourly time features for the context window. `timestamps` is a
         pandas DatetimeIndex of length SEQ_LEN, or None to drop the covariates."""
         if timestamps is None or not self._uses_covariates:
             self._x_mark = None
             return
-        feats = np.stack([
-            timestamps.hour / 23.0 - 0.5,
-            timestamps.dayofweek / 6.0 - 0.5,
-            (timestamps.day - 1) / 30.0 - 0.5,
-            (timestamps.dayofyear - 1) / 365.0 - 0.5,
-        ], axis=1).astype(np.float32)
-        self._x_mark = torch.from_numpy(feats).unsqueeze(0)
+        self._x_mark = torch.from_numpy(self._time_features(timestamps)).unsqueeze(0)
 
     def _fit_window(self, x: torch.Tensor) -> torch.Tensor:
         """Trim/pad the time axis to exactly SEQ_LEN (the weights fix this length)."""
@@ -151,6 +156,24 @@ class ITransformerWrapper(torch.nn.Module):
         if context.dim() == 2:
             context = context.unsqueeze(0)
         return self._run(context)[0]
+
+    @torch.no_grad()
+    def forecast_windows(self, contexts: torch.Tensor, timestamps_list=None) -> torch.Tensor:
+        """Batched sibling of forecast_horizon, for a chained back-test's worth of
+        windows at once: contexts (n_windows, channels, seq_len) -> (n_windows, pred_len,
+        channels). One forward pass instead of one per window -- the difference between
+        milliseconds and a minute once the chain covers a whole dataset's tail.
+
+        `timestamps_list`, if the checkpoint uses covariates, is a same-length list of
+        each window's own pandas DatetimeIndex -- a single shared `set_time_context`
+        would otherwise apply one window's calendar features to every window in the batch.
+        """
+        x_enc = self._fit_window(contexts).transpose(1, 2)
+        if not self._uses_covariates or timestamps_list is None:
+            return self._model(x_enc)
+        feats = np.stack([self._time_features(ts) for ts in timestamps_list], axis=0)
+        x_mark = torch.from_numpy(feats).to(contexts.device, contexts.dtype)
+        return self._model(x_enc, x_mark)
 
 
 # One entry per architecture, not per checkpoint: the picker shows "iTransformer" once,
@@ -350,7 +373,8 @@ class TimeSeriesTaskHandler(TaskHandler):
         from pnpxai.core.modality.modality import TimeSeriesModality
         return TimeSeriesModality()
 
-    def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str) -> str:
+    def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str,
+                      display_name: str | None = None) -> str:
         time_labels = None
         try:
             if isinstance(input_data, dict):
@@ -389,4 +413,5 @@ class TimeSeriesTaskHandler(TaskHandler):
             signals = np.zeros((1, max(attr_len, 10)))
             col_names = ["value"]
 
-        return render_timeseries_attribution(signals, attribution, output_path, col_names, time_labels=time_labels)
+        return render_timeseries_attribution(signals, attribution, output_path, col_names,
+                                             time_labels=time_labels, display_name=display_name)

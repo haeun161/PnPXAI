@@ -54,11 +54,12 @@ class ForecastInfo(BaseModel):
     """Populated instead of `predictions` for forecasting time-series models, whose
     output is a future trajectory rather than class probabilities.
 
-    Holds a backtest: the last `pred_len` points of the uploaded series are held out,
-    the `context` window immediately before them is fed to the model, and `predicted`
-    is what it produced. `actual` is the held-out truth, so the UI can draw predicted
-    against observed — it is None only when the upload is too short to hold anything
-    out, in which case the horizon runs past the end of the data.
+    Holds a backtest: the last points of the uploaded series are held out, and
+    `predicted` is a chain of one or more `window_len`-sized forecasts covering them,
+    each fed the real context right before it. `actual` is the held-out truth, so the
+    UI can draw predicted against observed — it is None only when the upload is too
+    short to hold anything out, in which case the horizon runs past the end of the
+    data as a single window.
 
     Series are (timestep, channel) so every channel can be plotted, not just the first.
     """
@@ -71,6 +72,12 @@ class ForecastInfo(BaseModel):
     # Channel the explainers attributed, so the chart can flag when the viewer is
     # looking at a different one than the attributions describe.
     attributed_channel: int = 0
+    # Length of each chained window within `predicted`, so the chart can mark where
+    # one forecast ends and the next (re-fed with real context) begins.
+    window_len: Optional[int] = None
+    # Which chained window `context` (and thus the explainers) actually describes --
+    # 0 by default, or whichever window a "explain this prediction" click requested.
+    explained_window_index: int = 0
 
 
 class JobStatus(BaseModel):

@@ -65,6 +65,7 @@ export async function submitExplainJob(
   explainerNames: string[],
   rankingMetric: string = "average",
   dataName?: string,
+  tsWindowIndex?: number,
 ): Promise<string> {
   const formData = new FormData();
   formData.append("file", file);
@@ -77,6 +78,9 @@ export async function submitExplainJob(
   });
   // Lets the server pick the checkpoint trained on this dataset; absent for uploads.
   if (dataName) params.set("data_name", dataName);
+  // Re-anchors the time-series backtest so this chained window's context is what
+  // gets explained (a chart window click), instead of the default (window 0).
+  if (tsWindowIndex !== undefined) params.set("ts_window_index", String(tsWindowIndex));
 
   const res = await fetch(`${BASE}/explain?${params}`, {
     method: "POST",

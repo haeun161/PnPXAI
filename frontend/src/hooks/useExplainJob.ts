@@ -27,7 +27,7 @@ export function useExplainJob() {
   }, []);
 
   const startJob = useCallback(
-    async (task: TaskType, file: File | Blob, modelName: string, explainerNames: string[], rankingMetric: string, dataName?: string) => {
+    async (task: TaskType, file: File | Blob, modelName: string, explainerNames: string[], rankingMetric: string, dataName?: string, tsWindowIndex?: number) => {
       const myGeneration = ++generationRef.current;
       setLoading(true);
       setError(null);
@@ -35,7 +35,7 @@ export function useExplainJob() {
       stopPolling();
 
       try {
-        const jobId = await submitExplainJob(task, file, modelName, explainerNames, rankingMetric, dataName);
+        const jobId = await submitExplainJob(task, file, modelName, explainerNames, rankingMetric, dataName, tsWindowIndex);
         if (myGeneration !== generationRef.current) return;
         jobIdRef.current = jobId;
         startTimeRef.current = Date.now();

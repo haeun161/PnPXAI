@@ -177,6 +177,16 @@ export default function Home() {
     cancelJob();
   };
 
+  // Re-runs the same explanation, anchored on a different chained forecast window --
+  // triggered by clicking a window on the Input & Prediction chart. Reuses whatever
+  // explainers/ranking metric the current job already ran, unlike EXPLAIN which
+  // re-detects them, since the model and task haven't changed.
+  const handleWindowExplain = (windowIndex: number) => {
+    const names = job?.explainer_names ?? explainers;
+    if (!task || !model || !inputData || busy || names.length === 0) return;
+    startJob(task, inputData, model, names, job?.ranking_metric ?? "average", dataName ?? undefined, windowIndex);
+  };
+
   const busy = loading || starting;
 
   return (
@@ -282,6 +292,8 @@ export default function Home() {
                 predictions={job.predictions}
                 forecast={job.forecast}
                 task={job.task}
+                onWindowExplain={handleWindowExplain}
+                windowExplainDisabled={busy}
               />
             )}
 

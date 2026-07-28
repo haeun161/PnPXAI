@@ -59,10 +59,11 @@ export interface PredictionItem {
   probability: number;
 }
 
-// Back-test for forecasting models: `context` is the input window, `predicted` the
-// horizon the model produced from it, and `actual` the observed values over that same
-// horizon (null when the forecast runs past the end of the uploaded data).
-// All series are [timestep][channel].
+// Back-test for forecasting models: `context` is the input window, `predicted` a chain
+// of one or more `window_len`-sized forecasts produced from it (each re-fed the real
+// context right before it), and `actual` the observed values over that same horizon
+// (null when the forecast runs past the end of the uploaded data). All series are
+// [timestep][channel].
 export interface ForecastInfo {
   col_names: string[];
   context: number[][];
@@ -71,6 +72,10 @@ export interface ForecastInfo {
   context_labels: string[] | null;
   horizon_labels: string[] | null;
   attributed_channel: number;
+  // Length of each chained window within `predicted`, for drawing boundary markers.
+  window_len?: number | null;
+  // Which chained window `context` (and thus the explainers) actually describes.
+  explained_window_index?: number;
 }
 
 export interface JobStatus {
