@@ -176,6 +176,78 @@ class ITransformerWrapper(torch.nn.Module):
         return self._model(x_enc, x_mark)
 
 
+class TimesNetWrapper(torch.nn.Module):
+    """TimesNet forecaster (https://github.com/thuml/TimesNet), checkpoints trained via
+    damin/notebooks/TimesNet_test.ipynb.
+
+    Same two-entry-point shape as `ITransformerWrapper` (`forward` for the explainer's
+    single-scalar target, `forecast_horizon`/`forecast_windows` for the chart), but a
+    single checkpoint layout: {"state_dict", "config"} only, and no timestamp covariates
+    (the notebook's TimesNet omits calendar embeddings, matching the simplification
+    already used for the reference iTransformer). Unlike iTransformer's variate-token
+    design, TimesNet's embedding conv is sized to a fixed channel count, so a checkpoint
+    only runs on the exact number of columns (`n_vars`) it was trained with.
+    """
+    CKPT_NAME = "timesnet_etth1.pth"
+
+    def __init__(self, ckpt_path=None):
+        super().__init__()
+        from backend.models.timesnet import TimesNet
+        ckpt_path = Path(ckpt_path) if ckpt_path else local_file("timeseries", self.CKPT_NAME)
+        if not ckpt_path.exists():
+            raise RuntimeError(
+                f"TimesNet checkpoint not found at {ckpt_path}. Place the trained "
+                f"{self.CKPT_NAME} there."
+            )
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        cfg = ckpt["config"]
+        self._model = TimesNet(**cfg)
+        self._model.load_state_dict(ckpt["state_dict"])
+        self._model.eval()
+        self.SEQ_LEN, self.PRED_LEN = cfg["seq_len"], cfg["pred_len"]
+
+    def _fit_window(self, x: torch.Tensor) -> torch.Tensor:
+        """Trim/pad the time axis to exactly SEQ_LEN (the weights fix this length)."""
+        seq_len = x.shape[-1]
+        if seq_len > self.SEQ_LEN:
+            return x[..., -self.SEQ_LEN:]
+        if seq_len < self.SEQ_LEN:
+            pad = x[..., :1].expand(*x.shape[:-1], self.SEQ_LEN - seq_len)
+            return torch.cat([pad, x], dim=-1)
+        return x
+
+    def _run(self, x: torch.Tensor) -> torch.Tensor:
+        """x: (batch, channels, seq_len) -> (batch, pred_len, channels)."""
+        x_enc = self._fit_window(x).transpose(1, 2)
+        return self._model(x_enc)
+
+    @staticmethod
+    def channel_for(num_channels: int) -> int:
+        """Same convention as `ITransformerWrapper`: the forecast target is the last
+        column of the upload (where ETT-style CSVs put OT and the checkpoint's own
+        feature_names put the label)."""
+        return max(num_channels - 1, 0)
+
+    def forward(self, x):
+        out = self._run(x)
+        ch = self.channel_for(out.shape[-1])
+        return out[:, 0, ch:ch + 1]
+
+    @torch.no_grad()
+    def forecast_horizon(self, context: torch.Tensor) -> torch.Tensor:
+        """context: (channels, seq_len) or (1, channels, seq_len) -> (pred_len, channels)."""
+        if context.dim() == 2:
+            context = context.unsqueeze(0)
+        return self._run(context)[0]
+
+    @torch.no_grad()
+    def forecast_windows(self, contexts: torch.Tensor, timestamps_list=None) -> torch.Tensor:
+        """Batched sibling of forecast_horizon -- see ITransformerWrapper.forecast_windows.
+        `timestamps_list` is accepted for interface parity but unused (no covariates)."""
+        x_enc = self._fit_window(contexts).transpose(1, 2)
+        return self._model(x_enc)
+
+
 # One entry per architecture, not per checkpoint: the picker shows "iTransformer" once,
 # and `checkpoints` maps each sample dataset to the weights trained on it, so choosing
 # the data chooses the model. Backend-only — the frontend receives an already-filtered
@@ -188,9 +260,22 @@ _TS_MODELS = {
         "description": "Long-term forecaster. Embeds each variate over the time axis, so "
                        "it runs on any channel count; the input/forecast window is read "
                        "from the checkpoint trained on the selected dataset.",
+        "wrapper": ITransformerWrapper,
         "checkpoints": {
             "ETTh1.csv": "iTransformer_etth1.pth",
             "illness.csv": "iTransformer_illness.pth",
+        },
+    },
+    "timesnet": {
+        "display_name": "TimesNet",
+        "architecture": "",
+        "description": "FFT-guided forecaster that reshapes each dominant period into a "
+                       "2D map and convolves over it. Trained per-dataset, so the checkpoint "
+                       "fixes the channel count along with the input/forecast window.",
+        "wrapper": TimesNetWrapper,
+        "checkpoints": {
+            "ETTh1.csv": "timesnet_etth1.pth",
+            "illness.csv": "timesnet_illness.pth",
         },
     },
 }
@@ -335,10 +420,13 @@ class TimeSeriesTaskHandler(TaskHandler):
             # checkpoint shares, so an unknown dataset can answer with any of them.
             filename = checkpoints.get(dataset) or next(iter(checkpoints.values()))
             ckpt_path = local_file("timeseries", filename)
+            wrapper_cls = _TS_MODELS[model_name]["wrapper"]
         elif uploaded_models.is_upload(model_name):
             # User-supplied weights. Only the self-describing {state_dict, config}
-            # layout is loadable — a bare state_dict carries no architecture.
+            # layout is loadable — a bare state_dict carries no architecture, so uploads
+            # are always treated as iTransformer's variate-token design.
             ckpt_path = uploaded_models.path_for(model_name)
+            wrapper_cls = ITransformerWrapper
         else:
             raise ValueError(
                 f"Unknown timeseries model: {model_name}. Pick a preset or upload a "
@@ -348,7 +436,7 @@ class TimeSeriesTaskHandler(TaskHandler):
         cache_key = f"{ckpt_path}_{num_input_channels}"
         from backend.core.device import to_device
         if cache_key not in _loaded_models:
-            model = ITransformerWrapper(ckpt_path=ckpt_path)
+            model = wrapper_cls(ckpt_path=ckpt_path)
             model.eval()
             _loaded_models[cache_key] = model
         return to_device(_loaded_models[cache_key])
