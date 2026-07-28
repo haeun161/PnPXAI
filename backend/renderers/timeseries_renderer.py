@@ -22,10 +22,10 @@ def _attribution_threshold(attr: np.ndarray) -> float:
     being coloured at its own relative best.
 
     Cells with exactly zero attribution are left out of the quantile. They are not weak
-    contributions, they are the absence of one: a channel-independent model (PatchTST)
-    gives every variate but the target a flat zero, which on ETTh1 is 86% of the grid and
-    drags the 90th percentile down far enough to keep 70% of the target channel coloured.
-    Ranking only what was actually attributed makes "the top decile" mean the top decile.
+    contributions, they are the absence of one: a channel-independent model gives every
+    variate but the target a flat zero, which drags the 90th percentile down far enough
+    to keep most of the target channel coloured. Ranking only what was actually
+    attributed makes "the top decile" mean the top decile.
     """
     magnitude = np.abs(attr)
     attributed = magnitude[magnitude > 0]
@@ -180,6 +180,7 @@ def render_timeseries_attribution(
     output_path: str,
     col_names: list[str] | None = None,
     time_labels: list[str] | None = None,
+    display_name: str | None = None,
 ) -> str:
     """Render time-series attribution as background colour strips (cyan→magenta).
 
@@ -200,10 +201,6 @@ def render_timeseries_attribution(
     channel_importance = np.abs(attr).mean(axis=-1)
     sorted_idx = np.argsort(channel_importance)[::-1]
     x = np.arange(signals.shape[-1])
-    # Computed once over every channel and reused by all three outputs, so the main view,
-    # the expanded view and the per-variable PNGs mark the same timesteps — including the
-    # views that only draw the top few channels.
-    threshold = _attribution_threshold(attr)
 
     # The result cards are landscape, and object-contain scales by whichever dimension
     # binds first — so a portrait figure gets shrunk to fit the height and leaves most of
@@ -221,12 +218,18 @@ def render_timeseries_attribution(
     # the plots and the colorbar — without extra room the two overlap.
     has_time_labels = time_labels is not None and len(time_labels) == seq_len
 
+    title = display_name or "Attribution"
+    # Computed once over every channel and reused by all three outputs, so the main view,
+    # the expanded view and the per-variable PNGs mark the same timesteps — including the
+    # views that only draw the top few channels.
+    threshold = _attribution_threshold(attr)
+
     if num_channels == 1:
         fig_height = 3.2
         fig, ax = plt.subplots(figsize=(_fig_width(fig_height), fig_height), dpi=100)
         _plot_single(ax, signals[0], attr[0], col_names[0], x, time_labels=time_labels,
                      threshold=threshold)
-        ax.set_title("Time-Series Attribution", fontsize=12, fontweight="bold", color="black")
+        ax.set_title(title, fontsize=12, fontweight="bold", color="black")
         bottom = (1.5 if has_time_labels else 0.7) / fig_height
         fig.subplots_adjust(bottom=bottom)
         _add_colorbar(fig, bottom_margin=0.34 / fig_height, threshold=threshold)
@@ -243,8 +246,7 @@ def render_timeseries_attribution(
             _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=i + 1,
                          show_xlabel=is_last, time_labels=time_labels, threshold=threshold)
             if i == 0:
-                extra = f" (top {show_n} of {num_channels})" if num_channels > 3 else ""
-                ax.set_title(f"Attribution by Variable{extra}", fontsize=12, fontweight="bold", color="black")
+                ax.set_title(title, fontsize=12, fontweight="bold", color="black")
 
         # Reserved in inches rather than as a fraction: the strip below the plots holds
         # rotated timestamps plus the axis title, whose height is set by the font, not by
@@ -257,7 +259,7 @@ def render_timeseries_attribution(
         # Expanded view
         expanded_path = output_path.replace(".png", "_expanded.png")
         _render_expanded(signals, attr, col_names, sorted_idx, expanded_path,
-                         time_labels=time_labels, threshold=threshold)
+                         time_labels=time_labels, display_name=display_name, threshold=threshold)
 
         # ZIP bundle: individual variable PNGs + Excel data
         zip_path = output_path.replace(".png", "_bundle.zip")
@@ -270,8 +272,9 @@ def render_timeseries_attribution(
 
 
 def _render_expanded(signals, attr, col_names, sorted_idx, output_path, time_labels=None,
-                     threshold=None):
-    """Render top K variables in a 5-row × 3-col grid, sorted by importance."""
+                     display_name=None, threshold=None):
+    """Render top K variables (all of them, up to MAX_VIZ_VARIABLES) in a single column,
+    sorted by importance."""
     num_channels = signals.shape[0]
     show_n = min(num_channels, MAX_VIZ_VARIABLES)
     # One variable per row: every channel gets the full width, and they share a time axis
@@ -288,8 +291,7 @@ def _render_expanded(signals, attr, col_names, sorted_idx, output_path, time_lab
         _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=i + 1,
                      show_xlabel=(i == show_n - 1), time_labels=time_labels, threshold=threshold)
         if i == 0:
-            extra = f" (top {show_n} of {num_channels})" if num_channels > show_n else ""
-            ax.set_title(f"All Variables — Ranked by Importance{extra}", fontsize=11, fontweight="bold", color="black")
+            ax.set_title(display_name or "Attribution", fontsize=11, fontweight="bold", color="black")
 
     # The figure grows with the channel count, so reserve the space below the last plot in
     # inches — a fixed fraction would balloon into a huge gap once there are many rows.

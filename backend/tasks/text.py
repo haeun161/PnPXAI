@@ -111,6 +111,7 @@ class TextTaskHandler(TaskHandler):
         from pnpxai.core.modality.modality import TextModality
         return TextModality()
 
-    def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str) -> str:
+    def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str,
+                      display_name: str | None = None) -> str:
         tokens = input_data if isinstance(input_data, list) else str(input_data).split()
         return render_text_attribution(tokens, attribution, output_path)

@@ -61,6 +61,10 @@ async def explain(
     explainer_names: str = Query(..., description="Comma-separated explainer names"),
     ranking_metric: str = Query("average", description="Metric for ranking: average, mu_fidelity, abpc, sensitivity, complexity"),
     data_name: Optional[str] = Query(None, description="Sample file name, when the data came from the sample list"),
+    ts_window_index: Optional[int] = Query(
+        None, description="Time-series only: re-anchor the backtest so this chained "
+                           "window's context is what's explained (a chart window click)."
+    ),
     file: UploadFile = File(...),
 ):
     contents = await file.read()
@@ -105,9 +109,10 @@ async def explain(
 
     # Serve from cache if this is one of our own sample files with precomputed results.
     # The cached entry must also match the current cache version and model weights,
-    # otherwise we fall through and recompute.
+    # otherwise we fall through and recompute. Precomputed results only ever describe
+    # the default (window 0) backtest, so a window-click re-explain must always run live.
     file_hash = precompute_cache.file_sha256(contents)
-    cached = precompute_cache.get_precomputed(task, file_hash, model_name)
+    cached = None if ts_window_index is not None else precompute_cache.get_precomputed(task, file_hash, model_name)
     model_fp = None
     if cached:
         # Loading a model can be slow (MOMENT-large is GBs) — keep it off the event loop.
@@ -123,7 +128,7 @@ async def explain(
     else:
         loop.run_in_executor(None, run_explanation_pipeline,
                              job_id, task, model_name, names, ranking_metric,
-                             {"data_name": data_name})
+                             {"data_name": data_name, "ts_window_index": ts_window_index})
 
     return {"job_id": job_id}
 
@@ -267,6 +272,7 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
         for i, exp_name in enumerate(explainer_names):
             job["current"] = i + 1
             job["current_explainer"] = exp_name
+            display_name = explainer_info_map.get(exp_name, {}).get("display_name", exp_name)
 
             try:
                 ExplainerClass = _get_pnpxai_explainer(exp_name)
@@ -319,7 +325,7 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
                 job["current_step"] = "visualization"
                 viz_path = os.path.join(job_dir, f"{exp_name}.png")
                 try:
-                    handler.render_result(attribution, viz_input, viz_path)
+                    handler.render_result(attribution, viz_input, viz_path, display_name=display_name)
                 except Exception as viz_err:
                     print(f"[detect-rank] viz failed for {exp_name}: {viz_err}")
 

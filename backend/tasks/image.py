@@ -308,7 +308,8 @@ class ImageTaskHandler(TaskHandler):
         from pnpxai.core.modality.modality import ImageModality
         return ImageModality()
 
-    def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str) -> str:
+    def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str,
+                      display_name: str | None = None) -> str:
         if isinstance(input_data, Image.Image):
             original_array = get_original_image_array(input_data)
         else:

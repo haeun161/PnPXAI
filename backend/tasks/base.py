@@ -35,6 +35,11 @@ class TaskHandler(ABC):
         ...
 
     @abstractmethod
-    def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str) -> str:
-        """Render visualization and save to output_path. Returns file path."""
+    def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str,
+                      display_name: str | None = None) -> str:
+        """Render visualization and save to output_path. Returns file path.
+
+        `display_name` is the explainer's display name (e.g. "SmoothGrad") -- only
+        time-series rendering uses it today, as the in-image chart title.
+        """
         ...

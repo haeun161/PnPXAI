@@ -1,8 +1,10 @@
 import copy
 import io
+import math
 import os
 from typing import Optional
 import numpy as np
+import pandas as pd
 import torch
 
 from backend.tasks import get_task_handler
@@ -12,6 +14,38 @@ from backend.core.job_manager import (
     update_job_result, update_result_step, rank_completed_results, VISUALIZATION_DIR,
     is_cancel_requested,
 )
+
+# Safety cap on how many pred_len-sized windows the Input & Prediction chart chains
+# together -- the chart shows the whole available back-test region (scrollable), so this
+# only guards against a pathological upload (e.g. tiny pred_len, huge file) rather than
+# reflecting any real UI limit. Windows are batched into one forward pass (see
+# `forecast_windows`), so even the full cap is a sub-second cost, not a per-window one.
+_MAX_BACKTEST_WINDOWS = 5000
+
+# How much of the uploaded series' tail counts as "test" for the Input & Prediction
+# chart -- a plain fraction rather than a fixed date, so it holds for any dataset
+# without needing to know an official train/val/test split. Skipped entirely below
+# _SMALL_DATASET_ROWS timesteps -- on a small upload, a 20% slice leaves too little to
+# back-test with, so the whole thing is used instead.
+_TEST_FRACTION = 0.2
+_SMALL_DATASET_ROWS = 100
+# If that test region spans more timesteps than this, it's cut down to the most recent
+# _RECENT_ROWS_CAP -- rounded *up* to the next whole pred_len window, so the boundary
+# never lands mid-window.
+_RECENT_ROWS_CAP = 100
+
+# Known sample files get a pinned back-test window instead of the dynamic rows-based
+# rule above, so the demo always shows the same illustrative period rather than
+# whatever "most recent 20%" happens to land on. User uploads (data_name absent) always
+# use the dynamic rule -- this only overrides the platform's own bundled samples.
+_PINNED_SAMPLE_WINDOWS = {
+    "ETTh1.csv": {"context_start": "2017-12-16 06:00:00", "n_windows": 20},
+    # Context start is 2 weeks earlier than the requested 2018-08-07 -- the requested
+    # end (2020-06-30) is illness.csv's very last row, so there's no data to extend
+    # into for a whole 30th window; the start moved back instead of truncating short.
+    "illness.csv": {"context_start": "2018-07-24 00:00:00", "n_windows": 30},
+}
+
 
 def _sliding_window_attribution(explainer_instance, input_tensor, target_tensor, window_size=512, stride=None):
     """Compute attribution via sliding windows for large time-series.
@@ -273,22 +307,36 @@ def _run_text_inference(handler, model, raw_text, model_name):
     return target_class, predictions, input_embeds, input_ids, tokens, wrapper_model
 
 
-def _run_ts_backtest(job_id: str, model, input_tensor: torch.Tensor, input_data: dict,
-                     origin=None) -> torch.Tensor:
-    """Back-test a forecasting model against the series and record the result for the
-    Input & Prediction chart.
+def _run_ts_backtest(
+    job_id: str, model, input_tensor: torch.Tensor, input_data: dict,
+    window_index: Optional[int] = None, data_name: Optional[str] = None,
+) -> torch.Tensor:
+    """Back-test a forecasting model against the tail of the uploaded series and record
+    the result for the Input & Prediction chart.
 
-    `pred_len` points starting at `origin` are held out and forecast from the `seq_len`
-    window right before them. That context window is returned and becomes the explainers'
-    input, so the chart and the attributions describe the same single forward pass.
+    The horizon is a chain of non-overlapping `pred_len`-sized forecasts, capped to the
+    most recent `_TEST_FRACTION` of the upload (falling back to the most recent
+    `_RECENT_WINDOWS_CAP` windows of that if it's a long stretch) so the chart reads as
+    a held-out test-like tail rather than the whole dataset: window w's context is the
+    real data right before it (already part of the upload, just held out for display)
+    -- not the model's own prior output -- so this reads as a stitched back-test rather
+    than an autoregressive rollout. The chain itself -- its length and every window's
+    position -- never depends on `window_index`, so the chart stays put across requests;
+    only which window counts as "the" explained one changes.
 
-    `origin` defaults to the end of the series — hold out the tail, which is all that can
-    be assumed about an arbitrary upload. A bundled sample overrides it with the start of
-    the split its checkpoint was tested on, so the demonstrated forecast is one the model
-    was actually evaluated on rather than whatever the file happens to end with. An origin
-    that would not leave a full context behind it or a full horizon ahead of it is ignored
-    in favour of the default. When even that is impossible the horizon simply runs past
-    the end of the data, and there is no observed series to compare against.
+    By default (`window_index=None`, equivalently 0) window 0 -- the earliest, leftmost
+    segment -- is the one whose context is returned and becomes the explainers' input,
+    so the chart's first segment and the attributions describe the same single forward
+    pass; other segments are for eyeballing consistency only. Passing `window_index`
+    picks a different segment from that same already-computed chain instead -- this is
+    how "explain this specific predicted window" (a user clicking a segment on the
+    chart) is implemented: a full re-run, same chart, different explained segment (the
+    chart then also hides everything before that segment, so the display never mixes
+    two different windows' worth of history).
+
+    When the upload is too short to hold anything out, the horizon simply runs a single
+    `pred_len` past the end of the data and there is no observed series to compare against;
+    `window_index` is meaningless there and is ignored.
     """
     seq_len = getattr(model, "SEQ_LEN", 96)
     pred_len = getattr(model, "PRED_LEN", 96)
@@ -296,24 +344,102 @@ def _run_ts_backtest(job_id: str, model, input_tensor: torch.Tensor, input_data:
     labels = input_data.get("time_labels")
     timestamps = input_data.get("timestamps")
 
-    if origin is not None and not (seq_len <= origin <= total - pred_len):
-        origin = None
-    has_actual = origin is not None or total >= seq_len + pred_len
+    has_actual = total >= seq_len + pred_len
     if has_actual:
-        end = origin if origin is not None else total - pred_len
-        ctx_slice = slice(end - seq_len, end)
-        hz_slice = slice(end, end + pred_len)
+        pinned = _PINNED_SAMPLE_WINDOWS.get(data_name) if data_name else None
+        pinned_start = None
+        if pinned and timestamps is not None:
+            try:
+                pinned_start = timestamps.get_loc(pd.Timestamp(pinned["context_start"]))
+            except KeyError:
+                pinned_start = None  # a differently-trimmed copy of the sample -- fall through
+
+        if pinned_start is not None and pinned_start + seq_len <= total:
+            # A bundled sample -- always show this specific illustrative period rather
+            # than whatever the dynamic rows-based rule below would land on.
+            chain_start = pinned_start
+            n_windows = min(_MAX_BACKTEST_WINDOWS, pinned["n_windows"],
+                            (total - chain_start - seq_len) // pred_len)
+            horizon_len = n_windows * pred_len
+            hz_slice = slice(chain_start + seq_len, chain_start + seq_len + horizon_len)
+        else:
+            full_capacity = (total - seq_len) // pred_len  # windows the whole upload could hold
+            if total < _SMALL_DATASET_ROWS:
+                # Small upload -- the 20% rule would leave too little to back-test with, so
+                # the test-region restriction is skipped entirely and everything is used.
+                n_windows = min(_MAX_BACKTEST_WINDOWS, full_capacity)
+            else:
+                # Cap the chain to the most recent _TEST_FRACTION of the *whole* upload, not
+                # just to _MAX_BACKTEST_WINDOWS -- otherwise, on a long series, the chain
+                # would eat into data that trained the model (if it did), and the chart
+                # would read as "the whole dataset" rather than a held-out test-like tail.
+                # A fixed fraction generalizes across datasets without needing an official
+                # split's dates.
+                test_start = round(total * (1 - _TEST_FRACTION))
+                region_rows = total - test_start - seq_len  # rows left for windows after
+                                                              # reserving seq_len for context
+                if region_rows > _RECENT_ROWS_CAP:
+                    # Round *up* to the next whole pred_len window rather than down, so the
+                    # window straddling the cap is kept whole instead of dropped.
+                    region_rows = math.ceil(_RECENT_ROWS_CAP / pred_len) * pred_len
+                n_windows = min(_MAX_BACKTEST_WINDOWS, full_capacity, max(1, region_rows // pred_len))
+            horizon_len = n_windows * pred_len
+            chain_start = total - seq_len - horizon_len  # window 0's context start
+            hz_slice = slice(total - horizon_len, total)
+    else:
+        n_windows = 1
+        hz_slice = None
+
+    # Which chained window's context is "the" explained one -- the earliest (first)
+    # by default, matching the chart's default leftmost scroll position and hiding
+    # nothing, unless a click asked for a specific one instead (which also hides
+    # every earlier window on the chart, so only the explained one's own history and
+    # everything after it stays visible).
+    canonical_w = max(0, min(window_index, n_windows - 1)) if window_index is not None else 0
+
+    if has_actual:
+        ctx_slice = slice(chain_start + canonical_w * pred_len,
+                          chain_start + canonical_w * pred_len + seq_len)
     else:
         ctx_slice = slice(max(total - seq_len, 0), total)
-        hz_slice = None
 
     context = input_tensor[..., ctx_slice]
     actual = input_tensor[..., hz_slice] if has_actual else None
 
-    if hasattr(model, "set_time_context"):
-        model.set_time_context(timestamps[ctx_slice] if timestamps is not None else None)
+    def _set_time(sl):
+        if hasattr(model, "set_time_context"):
+            model.set_time_context(timestamps[sl] if timestamps is not None else None)
 
-    predicted = model.forecast_horizon(context)  # (pred_len, channels)
+    if has_actual and hasattr(model, "forecast_windows"):
+        # Batch every chained window into one forward pass instead of one call per
+        # window -- the difference between milliseconds and (once the chain covers a
+        # whole dataset's tail, potentially thousands of windows) a full minute.
+        window_slices = [slice(chain_start + w * pred_len, chain_start + w * pred_len + seq_len)
+                         for w in range(n_windows)]
+        batched_contexts = torch.stack([input_tensor[0, :, s] for s in window_slices], dim=0)
+        timestamps_list = [timestamps[s] for s in window_slices] if timestamps is not None else None
+        predicted = model.forecast_windows(batched_contexts, timestamps_list)
+        predicted = predicted.reshape(n_windows * pred_len, predicted.shape[-1])
+        _set_time(ctx_slice)  # leave the model's covariate state matching `context`
+    else:
+        # Fallback for models without a batched path (or the too-short-upload case,
+        # where there's only ever one window): one forecast_horizon call per window,
+        # each fed the real context that precedes it.
+        pred_chunks = []
+        pos = (chain_start + seq_len) if has_actual else None
+        for w in range(n_windows):
+            if w == canonical_w:
+                w_context = context
+                _set_time(ctx_slice)
+            else:
+                w_ctx_slice = slice(pos - seq_len, pos)
+                w_context = input_tensor[..., w_ctx_slice]
+                _set_time(w_ctx_slice)
+            pred_chunks.append(model.forecast_horizon(w_context))
+            if has_actual:
+                pos += pred_len
+        predicted = torch.cat(pred_chunks, dim=0)  # (n_windows * pred_len, channels)
+        _set_time(ctx_slice)  # restore for the explainers, which run on `context`
 
     ctx_labels = labels[ctx_slice] if labels else None
     if not labels:
@@ -321,10 +447,9 @@ def _run_ts_backtest(job_id: str, model, input_tensor: torch.Tensor, input_data:
     elif has_actual:
         hz_labels = labels[hz_slice]
     elif timestamps is not None and len(timestamps) > 1:
-        from backend.tasks.timeseries import timestamp_format
         step = timestamps[-1] - timestamps[-2]
-        fmt = timestamp_format(timestamps)
-        hz_labels = [(timestamps[-1] + step * (i + 1)).strftime(fmt) for i in range(pred_len)]
+        hz_labels = [(timestamps[-1] + step * (i + 1)).strftime("%Y-%m-%d %H:%M")
+                     for i in range(pred_len)]
     else:
         hz_labels = [f"+{i + 1}" for i in range(pred_len)]
 
@@ -338,6 +463,10 @@ def _run_ts_backtest(job_id: str, model, input_tensor: torch.Tensor, input_data:
         "horizon_labels": hz_labels,
         "attributed_channel": (model.channel_for(len(col_names))
                                if hasattr(model, "channel_for") else 0),
+        # So the chart can mark where each chained pred_len window ends, and highlight
+        # which one (0-based within *this* response's own chain) `context` describes.
+        "window_len": pred_len,
+        "explained_window_index": canonical_w,
     })
 
     # Keep rendering aligned with what was actually explained — including the labels, or
@@ -413,11 +542,11 @@ def run_explanation_pipeline(
                 # Time-series is forecast-only: the chart gets a back-test, and the
                 # explainers get the very context window that produced it. There is one
                 # output (the next predicted value), so there is no class to pick.
-                from backend.tasks.timeseries import sample_forecast_origin
                 input_tensor = _run_ts_backtest(
                     job_id, model, input_tensor, input_data,
-                    origin=sample_forecast_origin(params.get("data_name"),
-                                                  input_data.get("timestamps")))
+                    window_index=params.get("ts_window_index"),
+                    data_name=params.get("data_name"),
+                )
                 target_class = 0
             else:
                 input_tensor = input_data if isinstance(input_data, torch.Tensor) else None
@@ -570,7 +699,7 @@ def run_explanation_pipeline(
                     viz_input = input_data
                 else:
                     viz_input = raw_data
-                handler.render_result(attribution, viz_input, viz_path)
+                handler.render_result(attribution, viz_input, viz_path, display_name=display_name)
 
                 # Build token attribution data for frontend highlighting (text only)
                 token_attributions = None

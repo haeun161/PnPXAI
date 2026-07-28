@@ -17,6 +17,74 @@ interface Props {
   className?: string;
 }
 
+// context_labels are "YYYY-MM-DD HH:MM" (backend/tasks/timeseries.py); the explained
+// window may be any chained segment now (a chart window click), not just the first, so
+// this always reflects whichever one `job.forecast.context` actually describes.
+function parseContextLabel(s: string) {
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(s);
+  return m ? { yyyy: m[1], mm: m[2], dd: m[3], hh: m[4], mi: m[5] } : null;
+}
+
+function labelToMinutes(p: { yyyy: string; mm: string; dd: string; hh: string; mi: string }): number {
+  return Date.UTC(Number(p.yyyy), Number(p.mm) - 1, Number(p.dd), Number(p.hh), Number(p.mi)) / 60000;
+}
+
+// The end date drops the year when it matches the start's, since a context window is at
+// most a few days long and repeating it just adds noise.
+function formatContextRange(labels: string[] | null | undefined): string | null {
+  if (!labels || labels.length === 0) return null;
+  const start = parseContextLabel(labels[0]);
+  const end = parseContextLabel(labels[labels.length - 1]);
+  if (!start || !end) return `${labels[0]} ~ ${labels[labels.length - 1]}`;
+  const startStr = `${start.yyyy}/${start.mm}/${start.dd} ${start.hh}:${start.mi}`;
+  const endStr = end.yyyy === start.yyyy
+    ? `${end.mm}/${end.dd} ${end.hh}:${end.mi}`
+    : `${end.yyyy}/${end.mm}/${end.dd} ${end.hh}:${end.mi}`;
+  return `${startStr} ~ ${endStr}`;
+}
+
+// "지난 N시간/일/분" -- seq_len (the number of context points) times the sampling
+// interval between them, read off the labels themselves so it's right regardless of
+// the data's actual granularity (hourly, daily, ...).
+function formatContextSpan(labels: string[] | null | undefined): string | null {
+  if (!labels || labels.length < 2) return null;
+  const p0 = parseContextLabel(labels[0]);
+  const p1 = parseContextLabel(labels[1]);
+  if (!p0 || !p1) return null;
+  const stepMin = labelToMinutes(p1) - labelToMinutes(p0);
+  if (stepMin <= 0) return null;
+  const totalMin = stepMin * labels.length;
+  if (totalMin % 60 !== 0) return `지난 ${totalMin}분`;
+  const hours = totalMin / 60;
+  // Beyond ~2 days, "N일" reads better than a large hour count -- but a clean 24h
+  // window (a very common seq_len) should still read as "지난 24시간", not "1일".
+  if (hours % 24 === 0 && hours > 48) return `지난 ${hours / 24}일`;
+  return `지난 ${hours}시간`;
+}
+
+// Small metadata pill for the explained-input date range: set off from the heading
+// with its own border/background so it reads as data, not as part of the title, with
+// tabular-nums keeping the two timestamps aligned.
+function InputRangeBadge({ range, span, className = "" }: { range: string; span?: string | null; className?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-gray-600 ${className}`}
+    >
+      <svg className="w-4 h-4 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <span className="font-medium text-gray-500 whitespace-nowrap">Input window:</span>
+      <span className="font-mono tabular-nums whitespace-nowrap font-semibold text-gray-800">{range}</span>
+      {span && (
+        <>
+          <span className="text-gray-300">·</span>
+          <span className="whitespace-nowrap text-gray-500">{span}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
 function getFaithfulness(r: ExplainerResult, task: TaskType): number | null {
   if (task === "text" || task === "timeseries") return r.abpc;
   if (r.mu_fidelity != null && r.abpc != null) return (r.mu_fidelity + r.abpc) / 2;
@@ -254,14 +322,20 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
     ...currentPlaceholder,
   ];
 
+  const inputRange = task === "timeseries" ? formatContextRange(job?.forecast?.context_labels) : null;
+  const inputSpan = task === "timeseries" ? formatContextSpan(job?.forecast?.context_labels) : null;
+
   if (expanded) {
     return (
       <div className="fixed inset-0 z-50 bg-white overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between z-10">
-          <h3 className="text-base font-semibold text-gray-800">
-            Explanation Results
-            <span className="font-normal text-gray-400 ml-1 text-sm">(ranked by {rankLabel})</span>
-          </h3>
+          <div className="flex items-center gap-3 min-w-0">
+            <h3 className="text-base font-semibold text-gray-800 flex-shrink-0">
+              Explanation Results
+              <span className="font-normal text-gray-400 ml-1 text-sm">(ranked by {rankLabel})</span>
+            </h3>
+            {inputRange && <InputRangeBadge range={inputRange} span={inputSpan} className="text-base" />}
+          </div>
           <div className="flex items-center gap-4">
             <WeightControls
               metricWeights={metricWeights}
@@ -305,10 +379,13 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
   return (
     <div className={`flex flex-col${className ? ` ${className}` : ""}`}>
       <ProgressIndicator job={job} loading={loading} />
-      <div className={`flex items-center justify-between mb-2 ${loading || job ? "mt-3" : ""}`}>
-        <h3 className="text-sm font-semibold text-gray-700">
-          Explanation Results
-        </h3>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <h3 className="text-sm font-semibold text-gray-700 flex-shrink-0">
+            Explanation Results
+          </h3>
+          {inputRange && <InputRangeBadge range={inputRange} span={inputSpan} className="text-sm" />}
+        </div>
         <button
           onClick={() => setExpanded(true)}
           className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 border border-blue-200 rounded-md px-2 py-0.5"
