@@ -133,12 +133,15 @@ def _plot_single(ax, signal, attr, col_name, x, rank=None, show_xlabel=True, tim
     label = f"#{rank}  {col_name}" if rank is not None else col_name
     # The label runs vertically, so a long sensor name is taller than the ~1.7in row it
     # belongs to and runs into the neighbouring plots. Clip it rather than let rows
-    # overlap; the untruncated names are in the downloadable bundle.
-    if len(label) > 18:
-        label = label[:17] + "…"
-    ax.set_ylabel(label, fontsize=8, fontweight="bold", color="black")
-    ax.tick_params(axis="y", labelsize=8, colors="black")
-    ax.tick_params(axis="x", labelsize=8, colors="black")
+    # overlap; the untruncated names are in the downloadable bundle. The cutoff scales
+    # with the label's own font size -- a bigger font needs fewer characters to fill
+    # the same 1.7in.
+    max_label_chars = 12
+    if len(label) > max_label_chars:
+        label = label[:max_label_chars - 1] + "…"
+    ax.set_ylabel(label, fontsize=13, color="black")
+    ax.tick_params(axis="y", labelsize=11, colors="black")
+    ax.tick_params(axis="x", labelsize=11, colors="black")
 
     # Ticks are placed in data coordinates, which are the original timestep numbers —
     # they no longer match positions in the array once the series has been thinned.
@@ -152,14 +155,14 @@ def _plot_single(ax, signal, attr, col_name, x, rank=None, show_xlabel=True, tim
     ax.set_xticks([x[i] for i in tick_idx])
     if time_labels is not None and len(time_labels) == len(x):
         # Few enough ticks to have room: draw them large enough to actually read.
-        size = 8 if len(tick_idx) <= 16 else 6
+        size = 10 if len(tick_idx) <= 16 else 8
         ax.set_xticklabels([time_labels[i] for i in tick_idx], fontsize=size, color="black",
                            rotation=30, ha="right")
     else:
-        ax.set_xticklabels([str(int(x[i])) for i in tick_idx], fontsize=7, color="black")
+        ax.set_xticklabels([str(int(x[i])) for i in tick_idx], fontsize=9, color="black")
 
     if show_xlabel:
-        ax.set_xlabel("Time" if time_labels else "Time Steps", fontsize=9, color="black")
+        ax.set_xlabel("Time" if time_labels else "Time Steps", fontsize=11, color="black")
 
 
 def _add_colorbar(fig, bottom_margin=0.06, threshold=None):
@@ -170,8 +173,8 @@ def _add_colorbar(fig, bottom_margin=0.06, threshold=None):
     label = "Attribution  (− pushes down / + pushes up)"
     if threshold:
         label += "      white = outside the top 10%, not drawn"
-    cb.set_label(label, fontsize=8, color="black", labelpad=4)
-    cb.ax.tick_params(labelsize=7, colors="black")
+    cb.set_label(label, fontsize=15, color="black", labelpad=4) 
+    cb.ax.tick_params(labelsize=9, colors="black")
 
 
 def render_timeseries_attribution(
@@ -229,7 +232,7 @@ def render_timeseries_attribution(
         fig, ax = plt.subplots(figsize=(_fig_width(fig_height), fig_height), dpi=100)
         _plot_single(ax, signals[0], attr[0], col_names[0], x, time_labels=time_labels,
                      threshold=threshold)
-        ax.set_title(title, fontsize=12, fontweight="bold", color="black")
+        ax.set_title(title, fontsize=20, color="black")
         bottom = (1.5 if has_time_labels else 0.7) / fig_height
         fig.subplots_adjust(bottom=bottom)
         _add_colorbar(fig, bottom_margin=0.34 / fig_height, threshold=threshold)
@@ -246,7 +249,7 @@ def render_timeseries_attribution(
             _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=i + 1,
                          show_xlabel=is_last, time_labels=time_labels, threshold=threshold)
             if i == 0:
-                ax.set_title(title, fontsize=12, fontweight="bold", color="black")
+                ax.set_title(title, fontsize=20, color="black")
 
         # Reserved in inches rather than as a fraction: the strip below the plots holds
         # rotated timestamps plus the axis title, whose height is set by the font, not by
@@ -291,7 +294,7 @@ def _render_expanded(signals, attr, col_names, sorted_idx, output_path, time_lab
         _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=i + 1,
                      show_xlabel=(i == show_n - 1), time_labels=time_labels, threshold=threshold)
         if i == 0:
-            ax.set_title(display_name or "Attribution", fontsize=11, fontweight="bold", color="black")
+            ax.set_title(display_name or "Attribution", fontsize=20, color="black")
 
     # The figure grows with the channel count, so reserve the space below the last plot in
     # inches — a fixed fraction would balloon into a huge gap once there are many rows.
@@ -323,7 +326,7 @@ def _create_bundle_zip(signals, attr, col_names, sorted_idx, channel_importance,
             fig, ax = plt.subplots(figsize=(8, 4.5), dpi=100)
             _plot_single(ax, signals[ch], attr[ch], col_names[ch], x, rank=rank,
                          time_labels=time_labels, threshold=threshold)
-            ax.set_title(f"#{rank} {col_names[ch]} — Attribution", fontsize=12, fontweight="bold", color="black", pad=10)
+            ax.set_title(f"#{rank} {col_names[ch]} — Attribution", fontsize=20, color="black") # , pad=10
             fig.subplots_adjust(bottom=0.22, top=0.88, left=0.12, right=0.92)
             _add_colorbar(fig, bottom_margin=0.08, threshold=threshold)
             fig.savefig(os.path.join(img_dir, fname), bbox_inches="tight", pad_inches=0.15)

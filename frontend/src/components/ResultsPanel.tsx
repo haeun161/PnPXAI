@@ -74,7 +74,7 @@ function InputRangeBadge({ range, span, className = "" }: { range: string; span?
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
       <span className="font-medium text-gray-500 whitespace-nowrap">Input window:</span>
-      <span className="font-mono tabular-nums whitespace-nowrap font-semibold text-gray-800">{range}</span>
+      <span className="tabular-nums whitespace-nowrap font-semibold text-gray-800">{range}</span>
       {span && (
         <>
           <span className="text-gray-300">·</span>
@@ -330,11 +330,11 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
       <div className="fixed inset-0 z-50 bg-white overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between z-10">
           <div className="flex items-center gap-3 min-w-0">
-            <h3 className="text-base font-semibold text-gray-800 flex-shrink-0">
+            <h3 className="text-lg font-semibold text-gray-800 flex-shrink-0">
               Explanation Results
-              <span className="font-normal text-gray-400 ml-1 text-sm">(ranked by {rankLabel})</span>
+              <span className="font-normal text-gray-400 ml-1 text-base">(ranked by {rankLabel})</span>
             </h3>
-            {inputRange && <InputRangeBadge range={inputRange} span={inputSpan} className="text-base" />}
+            {inputRange && <InputRangeBadge range={inputRange} span={inputSpan} className="text-lg" />}
           </div>
           <div className="flex items-center gap-4">
             <WeightControls
@@ -381,14 +381,14 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
       <ProgressIndicator job={job} loading={loading} />
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
-          <h3 className="text-sm font-semibold text-gray-700 flex-shrink-0">
+          <h3 className="text-base font-semibold text-gray-700 flex-shrink-0">
             Explanation Results
           </h3>
-          {inputRange && <InputRangeBadge range={inputRange} span={inputSpan} className="text-sm" />}
+          {inputRange && <InputRangeBadge range={inputRange} span={inputSpan} className="text-base" />}
         </div>
         <button
           onClick={() => setExpanded(true)}
-          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 border border-blue-200 rounded-md px-2 py-0.5"
+          className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 border border-blue-200 rounded-md px-2 py-0.5"
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />

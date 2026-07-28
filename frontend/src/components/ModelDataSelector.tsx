@@ -76,7 +76,7 @@ export default function ModelDataSelector({ task, model, onModelSelect, onDataRe
   if (!task) {
     return (
       <div className="space-y-2">
-        <label className="block text-sm font-semibold text-gray-700">Model &amp; Data</label>
+        <label className="block text-base font-semibold text-gray-700">Model &amp; Data</label>
         <p className="text-xs text-gray-400">Select a task first</p>
       </div>
     );
@@ -136,7 +136,7 @@ export default function ModelDataSelector({ task, model, onModelSelect, onDataRe
 
   return (
     <div>
-      <label className="block text-sm font-semibold text-gray-700 mb-1">Model &amp; Data</label>
+      <label className="block text-base font-semibold text-gray-700 mb-1">Model &amp; Data</label>
       <div className="border border-gray-200 rounded-xl overflow-hidden">
         <div className="flex bg-gray-50 border-b border-gray-200">
           <button onClick={() => switchMode("sample")} disabled={disabled} className={tabClass(mode === "sample")}>

@@ -66,15 +66,15 @@ export default function ControlBox({
     <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm space-y-3">
       {/* Explainers header */}
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Explainers</span>
+        <span className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Explainers</span>
         <div className="flex items-center gap-2">
           <button
             onClick={() => onSetAllHidden(!allHidden)}
-            className="text-[10px] text-gray-400 hover:text-blue-600 transition-colors"
+            className="text-xs text-gray-400 hover:text-blue-600 transition-colors"
           >
             {allHidden ? "Show all" : "Hide all"}
           </button>
-          <span className={`text-[10px] font-medium tabular-nums ${loading ? "text-blue-600" : "text-gray-400"}`}>
+          <span className={`text-xs font-medium tabular-nums ${loading ? "text-blue-600" : "text-gray-400"}`}>
             {visibleCount}/{total}
           </span>
         </div>
@@ -98,13 +98,13 @@ export default function ControlBox({
               <button
                 key={name}
                 onClick={() => onToggleHidden(name)}
-                className={`flex items-center gap-2 text-[11px] font-medium px-2 py-1.5 rounded-lg border transition-all text-left ${
+                className={`flex items-center gap-2 text-sm font-medium px-2 py-1.5 rounded-lg border transition-all text-left ${
                   isHidden ? "opacity-40 line-through border-gray-200 bg-gray-50 text-gray-400" : styles.block
                 }`}
                 title={isHidden ? "Click to show" : (result?.current_step ?? status)}
               >
                 {result?.rank != null && (
-                  <span className="text-[9px] font-bold text-gray-400 w-4 text-center flex-shrink-0">
+                  <span className="text-[11px] font-bold text-gray-400 w-4 text-center flex-shrink-0">
                     #{result.rank}
                   </span>
                 )}
@@ -122,7 +122,7 @@ export default function ControlBox({
       <div>
         {/* Header row */}
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Ranking Metric</span>
+          <span className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Ranking Metric</span>
           <div ref={gearRef} className="relative">
             <button
               onClick={() => setGearOpen((o) => !o)}
@@ -161,10 +161,10 @@ export default function ControlBox({
                         return (
                           <div key={key} className="flex flex-col gap-1">
                             <div className="flex items-center gap-2">
-                              <span className={`text-[11px] flex-1 truncate ${w > 0 ? "text-gray-600" : "text-gray-300"}`}>
+                              <span className={`text-sm flex-1 truncate ${w > 0 ? "text-gray-600" : "text-gray-300"}`}>
                                 {label}
                               </span>
-                              <span className={`text-[10px] font-mono tabular-nums w-7 text-right ${w > 0 ? "text-blue-500" : "text-gray-300"}`}>
+                              <span className={`text-xs font-mono tabular-nums w-7 text-right ${w > 0 ? "text-blue-500" : "text-gray-300"}`}>
                                 {w > 0 ? `${pct}%` : "—"}
                               </span>
                               <div className="flex items-center gap-1">
@@ -243,7 +243,7 @@ export default function ControlBox({
                     onClick={() => { if (!isLast) onWeightChange(key, active ? 0 : 1); }}
                     disabled={isLast}
                     title={isLast ? "At least one metric required" : undefined}
-                    className={`flex-1 flex items-center justify-center gap-0.5 text-[10px] font-semibold py-1.5 rounded-lg border transition-all ${
+                    className={`flex-1 flex items-center justify-center gap-0.5 text-xs font-semibold py-1.5 rounded-lg border transition-all ${
                       active
                         ? isLast
                           ? "bg-blue-50 border-blue-200 text-blue-400 cursor-not-allowed"

@@ -310,7 +310,7 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
 
       <div className="p-3 flex-shrink-0">
         <div className="flex items-center justify-between gap-1">
-          <h4 className="text-sm font-semibold text-gray-800 truncate">{result.display_name}</h4>
+          <h4 className="text-base font-semibold text-gray-800 truncate">{result.display_name}</h4>
           {isCompleted && modelName && dataUrl && (
             <Link
               href={(() => {
@@ -328,7 +328,7 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
               })()}
               title="Open in Optimizer"
               prefetch={false}
-              className="flex-shrink-0 flex items-center gap-0.5 text-[10px] font-semibold text-white bg-blue-400 hover:bg-blue-300 active:translate-y-0.5 active:shadow-none rounded px-2 py-1 transition-all shadow-[0_3px_0_#3b82f6]"
+              className="flex-shrink-0 flex items-center gap-0.5 text-xs font-semibold text-white bg-blue-400 hover:bg-blue-300 active:translate-y-0.5 active:shadow-none rounded px-2 py-1 transition-all shadow-[0_3px_0_#3b82f6]"
             >
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -347,16 +347,16 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
                 : null;
               return (
                 <div key={m.key} className={`flex items-center justify-between rounded-lg ${isExpanded ? "px-2 py-1" : "px-2.5 py-1.5"} ${isRanked ? "bg-gray-50 border border-gray-200" : "bg-white border border-gray-100"}`}>
-                  <p className={`flex items-center gap-1 font-medium ${isRanked ? "text-gray-700" : "text-gray-400"} ${isExpanded ? "text-xs" : "text-sm"}`}>
+                  <p className={`flex items-center gap-1 font-medium ${isRanked ? "text-gray-700" : "text-gray-400"} ${isExpanded ? "text-sm" : "text-base"}`}>
                     {m.label}
                     <svg className={`w-4 h-4 flex-shrink-0 ${isRanked ? "text-gray-500" : "text-gray-300"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5M5 12l7-7 7 7" />
                     </svg>
                     {pct !== null && (
-                      <span className="text-[10px] text-gray-400 font-normal">{pct}%</span>
+                      <span className="text-xs text-gray-400 font-normal">{pct}%</span>
                     )}
                   </p>
-                  <span className={`font-mono text-center py-0.5 rounded ${isExpanded ? "text-[10px] w-12" : "text-sm w-16"} ${isRanked ? "text-gray-800 font-semibold" : "text-gray-300"}`}>
+                  <span className={`font-mono text-center py-0.5 rounded ${isExpanded ? "text-xs w-14" : "text-base w-20"} ${isRanked ? "text-gray-800 font-semibold" : "text-gray-300"}`}>
                     {m.value?.toFixed(3) ?? "—"}
                   </span>
                 </div>

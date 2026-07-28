@@ -154,7 +154,7 @@ function ForecastChart({
 
   return (
     <div className="w-full">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1.5 text-xs text-gray-600">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1.5 text-sm text-gray-600">
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-4 h-1 bg-gray-400" /> Input
         </span>
@@ -195,7 +195,7 @@ function ForecastChart({
             onClick={() => { if (clickable) onWindowExplain!(0); }}
             disabled={!clickable}
             title="Clicking a window trims away everything before it -- this brings those earlier windows back"
-            className="flex items-center gap-1 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h5M4 9a8 8 0 1 1 2 5.3" />
@@ -206,7 +206,7 @@ function ForecastChart({
         <select
           value={ch}
           onChange={(e) => setChannel(Number(e.target.value))}
-          className="ml-auto rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs"
+          className="ml-auto rounded border border-gray-300 bg-white px-1.5 py-0.5 text-sm"
         >
           {forecast.col_names.map((name, i) => (
             <option key={name} value={i}>
@@ -313,7 +313,7 @@ export default function PredictionInfo({ dataUrl, predictions, forecast, task, o
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-4 py-3">
-      <h3 className="text-sm font-semibold text-gray-700 mb-2">Input & Prediction</h3>
+      <h3 className="text-base font-semibold text-gray-700 mb-2">Input & Prediction</h3>
       <div className={`flex gap-4 ${task === "timeseries" && forecast ? "flex-col" : ""}`}>
         {/* Original data display */}
         {task === "image" && dataUrl && (
