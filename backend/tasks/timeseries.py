@@ -464,12 +464,18 @@ class TimeSeriesTaskHandler(TaskHandler):
     def render_result(self, attribution: np.ndarray, input_data: Any, output_path: str,
                       display_name: str | None = None) -> str:
         time_labels = None
+        next_pred = None
+        next_pred_label = None
+        attributed_channel = None
         try:
             if isinstance(input_data, dict):
                 tensor = input_data["tensor"]
                 col_names = input_data["col_names"]
                 signals = tensor.squeeze(0).detach().cpu().numpy()
                 time_labels = input_data.get("time_labels")
+                next_pred = input_data.get("next_pred")
+                next_pred_label = input_data.get("next_pred_label")
+                attributed_channel = input_data.get("attributed_channel")
 
             elif isinstance(input_data, torch.Tensor):
                 signals = input_data.squeeze(0).detach().cpu().numpy()
@@ -502,4 +508,6 @@ class TimeSeriesTaskHandler(TaskHandler):
             col_names = ["value"]
 
         return render_timeseries_attribution(signals, attribution, output_path, col_names,
-                                             time_labels=time_labels, display_name=display_name)
+                                             time_labels=time_labels, display_name=display_name,
+                                             next_pred=next_pred, next_pred_label=next_pred_label,
+                                             attributed_channel=attributed_channel)

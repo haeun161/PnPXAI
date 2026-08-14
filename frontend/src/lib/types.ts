@@ -76,6 +76,9 @@ export interface ForecastInfo {
   window_len?: number | null;
   // Which chained window `context` (and thus the explainers) actually describes.
   explained_window_index?: number;
+  // True only when a window was explicitly picked. The default view shows the whole
+  // chain to choose from; a selection shows just the chosen window's horizon.
+  window_selected?: boolean;
 }
 
 export interface JobStatus {

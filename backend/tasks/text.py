@@ -15,13 +15,16 @@ def _resolve_text_source(model_name: str, hf_id: str):
     return hf_id, False
 
 _TEXT_MODELS = {
-    "distilbert-sst2": {
-        "display_name": "DistilBERT (SST-2)",
-        "architecture": "Transformer",
-        "description": "DistilBERT fine-tuned on SST-2 for sentiment analysis (positive/negative).",
-        "hf_id": "distilbert-base-uncased-finetuned-sst-2-english",
-        "num_labels": 2,
-        "label_map": {0: "NEGATIVE", 1: "POSITIVE"},
+    "hatexplain-bert": {
+        "display_name": "BERT",
+        "description": "BERT fine-tuned on HateXplain (AAAI 2021) for 3-class hate speech "
+                       "detection: hate speech / normal / offensive.",
+        "hf_id": "Hate-speech-CNERG/bert-base-uncased-hatexplain",
+        "num_labels": 3,
+        # Matches the checkpoint's own config.id2label ordering.
+        "label_map": {0: "HATE SPEECH", 1: "NORMAL", 2: "OFFENSIVE"},
+        # One sample post per gold label, taken from the HateXplain test split.
+        "datasets": ["hate_speech_post.txt", "normal_post.txt", "offensive_post.txt"],
     },
 }
 
@@ -47,7 +50,9 @@ def _load_hf_text_model(model_id: str) -> dict:
     if model_id not in _hf_text_cache:
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(model_id)
-        model = AutoModelForSequenceClassification.from_pretrained(model_id)
+        # output_attentions=False: some repos (e.g. HateXplain) ship it enabled, which the
+        # default sdpa attention rejects — and returning attentions is wasted work here.
+        model = AutoModelForSequenceClassification.from_pretrained(model_id, output_attentions=False)
         model.eval()
         label_map = {}
         if hasattr(model.config, "id2label"):
@@ -65,9 +70,11 @@ class TextTaskHandler(TaskHandler):
 
     def get_models(self) -> list[dict]:
         return [
+            # `architecture` is required by the ModelInfo schema; every text preset here is
+            # a transformer, so an entry may leave it out.
             {"name": name, "display_name": info["display_name"],
-             "architecture": info["architecture"], "description": info["description"],
-             "task": "text"}
+             "architecture": info.get("architecture", "Transformer"),
+             "description": info["description"], "task": "text"}
             for name, info in _TEXT_MODELS.items()
         ]
 
@@ -85,10 +92,21 @@ class TextTaskHandler(TaskHandler):
             from transformers import AutoModelForSequenceClassification
             hf_id = _TEXT_MODELS[model_name]["hf_id"]
             src, local_only = _resolve_text_source(model_name, hf_id)
-            model = AutoModelForSequenceClassification.from_pretrained(src, local_files_only=local_only)
+            model = AutoModelForSequenceClassification.from_pretrained(
+                src, local_files_only=local_only, output_attentions=False
+            )
             model.eval()
             _loaded_models[model_name] = model
         return to_device(_loaded_models[model_name])
+
+    def get_model_datasets(self, model_name: str) -> list[str] | None:
+        """Sample files this model is meant to be demoed on, or None for "anything".
+
+        The sample list is shared per task, so a preset trained on one corpus would
+        otherwise advertise files from another one. Uploaded / HF-id models are not
+        tied to a corpus and keep the full list.
+        """
+        return _TEXT_MODELS.get(model_name, {}).get("datasets")
 
     def get_label_map(self, model_name: str) -> dict:
         if not _is_preset(model_name):

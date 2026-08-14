@@ -1,6 +1,9 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { ExplainerResult, JobStatus, TaskType } from "@/lib/types";
+import {
+  DEFAULT_METRIC_WEIGHTS, MetricDef, getMetricValues, metricsForTask,
+} from "@/lib/metrics";
 import ResultCard from "./ResultCard";
 import ProgressIndicator from "./ProgressIndicator";
 
@@ -85,22 +88,13 @@ function InputRangeBadge({ range, span, className = "" }: { range: string; span?
   );
 }
 
-function getFaithfulness(r: ExplainerResult, task: TaskType): number | null {
-  if (task === "text" || task === "timeseries") return r.abpc;
-  if (r.mu_fidelity != null && r.abpc != null) return (r.mu_fidelity + r.abpc) / 2;
-  return r.mu_fidelity ?? r.abpc;
-}
-
-type MetricMap = Record<string, number | null>;
-
-function getMetricValues(r: ExplainerResult, task: TaskType): MetricMap {
-  return {
-    faithfulness: getFaithfulness(r, task),
-    sensitivity: r.sensitivity,
-    complexity: r.complexity,
-  };
-}
-
+/** Weighted average over the metrics available for the task.
+ *
+ * A metric the backend could not compute counts as 0 (getMetricValues), rather than being
+ * dropped from the average — dropping it used to give an explainer with no metrics at all
+ * an empty average, i.e. a score of 0, which beat every real (sign-flipped, hence
+ * negative) Robustness/Compactness score and floated it to rank 1.
+ */
 function getRankScore(
   r: ExplainerResult,
   weights: Record<string, number>,
@@ -108,15 +102,19 @@ function getRankScore(
 ): number {
   const values = getMetricValues(r, task);
   let sum = 0, total = 0;
-  for (const [key, w] of Object.entries(weights)) {
+  for (const { key } of metricsForTask(task)) {
+    const w = weights[key] ?? 0;
     if (w <= 0) continue;
-    const val = values[key] ?? null;
-    if (val == null) continue;
-    sum += val * w;
+    sum += values[key] * w;
     total += w;
   }
   return total > 0 ? sum / total : 0;
 }
+
+// A text card is a 380px token heatmap stacked on the title plus one row per metric
+// (~184px for three), and the strip's own pb-2 takes another 8px. Tailwind's JIT only sees
+// literal class names, so this is applied as an inline height, not an h-[...] class.
+const TEXT_CARD_HEIGHT = 580;
 
 function rerank(results: ExplainerResult[], weights: Record<string, number>, task: TaskType): ExplainerResult[] {
   const completed = results.filter((r) => r.status === "completed").map((r) => ({ ...r }));
@@ -125,23 +123,14 @@ function rerank(results: ExplainerResult[], weights: Record<string, number>, tas
   return [...completed, results.filter((r) => r.status !== "completed")].flat();
 }
 
-const METRIC_LABELS = [
-  { key: "faithfulness", label: "Faithfulness" },
-  { key: "sensitivity",  label: "Robustness" },
-  { key: "complexity",   label: "Compactness" },
-];
-
-const DEFAULT_WEIGHTS: Record<string, number> = {
-  faithfulness: 1, sensitivity: 1, complexity: 1,
-};
-
 interface WeightControlsProps {
   metricWeights: Record<string, number>;
   onWeightChange: (metric: string, value: number) => void;
   onResetWeights: () => void;
+  metricDefs: MetricDef[];
 }
 
-function WeightControls({ metricWeights, onWeightChange, onResetWeights }: WeightControlsProps) {
+function WeightControls({ metricWeights, onWeightChange, onResetWeights, metricDefs }: WeightControlsProps) {
   const [gearOpen, setGearOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editingVal, setEditingVal] = useState("");
@@ -156,14 +145,14 @@ function WeightControls({ metricWeights, onWeightChange, onResetWeights }: Weigh
     return () => document.removeEventListener("mousedown", handler);
   }, [gearOpen]);
 
-  const activeCount = METRIC_LABELS.filter(({ key }) => (metricWeights[key] ?? 0) > 0).length;
-  const total = METRIC_LABELS.reduce((s, { key }) => s + (metricWeights[key] ?? 0), 0);
+  const activeCount = metricDefs.filter(({ key }) => (metricWeights[key] ?? 0) > 0).length;
+  const total = metricDefs.reduce((s, { key }) => s + (metricWeights[key] ?? 0), 0);
 
   return (
     <div className="flex items-center gap-2">
-      {/* 3 toggle buttons */}
+      {/* One toggle per metric available for the task */}
       <div className="flex gap-1">
-        {METRIC_LABELS.map(({ key, label }) => {
+        {metricDefs.map(({ key, label }) => {
           const active = (metricWeights[key] ?? 0) > 0;
           const isLast = active && activeCount === 1;
           return (
@@ -212,7 +201,7 @@ function WeightControls({ metricWeights, onWeightChange, onResetWeights }: Weigh
               <button onClick={onResetWeights} className="text-[10px] text-gray-400 hover:text-blue-600 transition-colors">reset</button>
             </div>
             <div className="flex flex-col gap-2.5">
-              {METRIC_LABELS.map(({ key, label }) => {
+              {metricDefs.map(({ key, label }) => {
                 const w = metricWeights[key] ?? 0;
                 const pct = total > 0 ? Math.round((w / total) * 100) : 0;
                 return (
@@ -275,26 +264,24 @@ function WeightControls({ metricWeights, onWeightChange, onResetWeights }: Weigh
   );
 }
 
-export default function ResultsPanel({ results, task, job, loading, hiddenExplainers = [], metricWeights = DEFAULT_WEIGHTS, onWeightChange, onResetWeights, className }: Props) {
+export default function ResultsPanel({ results, task, job, loading, hiddenExplainers = [], metricWeights = DEFAULT_METRIC_WEIGHTS, onWeightChange, onResetWeights, className }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   const handleWeightChange = onWeightChange ?? (() => {});
   const handleResetWeights = onResetWeights ?? (() => {});
 
-  // Faithfulness isn't computed for time-series (classification-only metrics), so it
-  // must not count towards the ranking or appear in the "ranked by" label.
-  const activeMetrics = Object.entries(metricWeights)
-    .filter(([k, w]) => w > 0 && !(task === "timeseries" && k === "faithfulness"))
-    .map(([k]) => k);
+  // Only the metrics the backend computes for this task can be ranked on or labelled —
+  // text has no MuFidelity, time-series neither MuFidelity nor AbPC.
+  const metricDefs = metricsForTask(task);
+  const activeMetrics = metricDefs
+    .filter(({ key }) => (metricWeights[key] ?? 0) > 0)
+    .map(({ key }) => key);
 
-  const METRIC_DISPLAY: Record<string, string> = {
-    faithfulness: "Faithfulness", sensitivity: "Robustness", complexity: "Compactness",
-  };
   const rankLabel = activeMetrics.length === 0
     ? "no metrics"
-    : activeMetrics.length >= 3
+    : activeMetrics.length === metricDefs.length && metricDefs.length > 1
     ? "weighted avg"
-    : activeMetrics.map((m) => METRIC_DISPLAY[m] ?? m).join(", ");
+    : metricDefs.filter(({ key }) => activeMetrics.includes(key)).map(({ label }) => label).join(", ");
 
   // Only show completed/failed/not_supported as real cards — pending ones are not yet visible
   const visibleResults = results
@@ -341,6 +328,7 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
               metricWeights={metricWeights}
               onWeightChange={handleWeightChange}
               onResetWeights={handleResetWeights}
+              metricDefs={metricDefs}
             />
             <button
               onClick={() => setExpanded(false)}
@@ -357,10 +345,11 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
           {/* A time-series attribution is a wide strip chart, so it gets three per row
               where an image gets five — a fifth of the width turned it into a tall narrow
               column that object-contain then letterboxed into a sliver. Both wrap onto the
-              next row, with rows sized so two of them fill the viewport. */}
+              next row, with rows sized so two of them fill the viewport — except text,
+              which needs its own full card height (half a viewport clipped the metrics). */}
           <div
-            className={`grid gap-3 ${task === "timeseries" ? "grid-cols-3" : "grid-cols-5"}`}
-            style={{ gridAutoRows: "calc((100vh - 61px - 48px - 16px) / 2)" }}
+            className={`grid gap-3 ${task === "timeseries" || task === "text" ? "grid-cols-3" : "grid-cols-5"}`}
+            style={{ gridAutoRows: task === "text" ? `${TEXT_CARD_HEIGHT}px` : "calc((100vh - 61px - 48px - 16px) / 2)" }}
           >
             {rankedResults.map((r, i) => (
               <div key={r.explainer_name} className="animate-card-in h-full" style={{ animationDelay: `${i * 60}ms` }}>
@@ -373,8 +362,13 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
     );
   }
 
-  const cardContainerClass = task === "text" ? "h-[490px]" : task === "timeseries" ? "flex-1 min-h-0" : "h-[485px]";
-  const cardWidth = task === "timeseries" ? "calc((100% - 0.75rem) / 2)" : "calc((100% - 2.25rem) / 4)";
+  const cardContainerClass = task === "text" ? "" : task === "timeseries" ? "flex-1 min-h-0" : "h-[485px]";
+  const cardContainerStyle = task === "text" ? { height: TEXT_CARD_HEIGHT } : undefined;
+  // How many cards fit before the strip scrolls horizontally. Text gets 3: a token
+  // heatmap needs the width to stay readable, and there is now one metric row per
+  // metric under it. Time-series strips are wider still, so they get 2.
+  const visibleCards = task === "timeseries" ? 2 : task === "text" ? 3 : 4;
+  const cardWidth = `calc((100% - ${0.75 * (visibleCards - 1)}rem) / ${visibleCards})`;
 
   return (
     <div className={`flex flex-col${className ? ` ${className}` : ""}`}>
@@ -396,7 +390,7 @@ export default function ResultsPanel({ results, task, job, loading, hiddenExplai
           Expand ({rankedResults.length})
         </button>
       </div>
-      <div className={`flex gap-3 overflow-x-auto pb-2 ${cardContainerClass}`}>
+      <div className={`flex gap-3 overflow-x-auto pb-2 ${cardContainerClass}`} style={cardContainerStyle}>
         {rankedResults.map((r, i) => (
           <div key={r.explainer_name} className="animate-card-in flex-shrink-0 h-full" style={{ width: cardWidth, animationDelay: `${i * 60}ms` }}>
             <ResultCard result={r} task={task} activeMetrics={activeMetrics} metricWeights={metricWeights} modelName={job?.model_name} dataUrl={job?.original_data_url} />

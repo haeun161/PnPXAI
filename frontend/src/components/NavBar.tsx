@@ -14,7 +14,16 @@ export default function NavBar() {
     <header className="bg-white border-b border-gray-200 px-6 py-0">
       <div className="max-w-[1600px] mx-auto px-6 flex items-center justify-between">
         {/* Brand */}
-        <div className="py-4 flex-shrink-0">
+        {/* items-baseline: a replaced element's baseline is its bottom edge, so the logo's
+            bottom lands exactly on the title's baseline — both read as sitting on one line. */}
+        <div className="py-4 flex-shrink-0 flex items-baseline gap-3">
+          {/* 78x41 native, so h-8 only downscales — it stays crisp */}
+          <img
+            src="/logo.png"
+            alt="PnPXAI logo"
+            className="h-8 w-auto select-none"
+            draggable={false}
+          />
           <h1 className="text-xl font-bold text-gray-900">
             PnPXAI: Plug-and-Play Explainable AI
           </h1>

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { TaskType } from "@/lib/types";
+import { DEFAULT_METRIC_WEIGHTS } from "@/lib/metrics";
 import TaskSelector from "@/components/TaskSelector";
 import ModelDataSelector from "@/components/ModelDataSelector";
 import PredictionInfo from "@/components/PredictionInfo";
@@ -36,7 +37,8 @@ const ARCH_COLORS: Record<string, string> = {
   Pool: "bg-gray-100 text-gray-600 border-gray-200",
 };
 
-const DEFAULT_WEIGHTS = { faithfulness: 1, sensitivity: 1, complexity: 1 };
+// Per-metric ranking weights live in lib/metrics.ts, so the metric set stays in one place.
+const DEFAULT_WEIGHTS = DEFAULT_METRIC_WEIGHTS;
 const SS_KEY = "analysis_state";
 
 
@@ -89,7 +91,9 @@ export default function Home() {
     setExplainers(saved.explainers);
     setArchitectures(saved.architectures ?? []);
     setHiddenExplainers(saved.hiddenExplainers);
-    setMetricWeights(saved.metricWeights);
+    // Merge over the defaults: a session saved before a metric existed would otherwise
+    // restore weights with that metric missing entirely.
+    setMetricWeights({ ...DEFAULT_WEIGHTS, ...saved.metricWeights });
     if (saved.jobId) attachToJob(saved.jobId);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -181,10 +185,13 @@ export default function Home() {
   // triggered by clicking a window on the Input & Prediction chart. Reuses whatever
   // explainers/ranking metric the current job already ran, unlike EXPLAIN which
   // re-detects them, since the model and task haven't changed.
-  const handleWindowExplain = (windowIndex: number) => {
+  // `null` means "no particular window" -- the Reset button -- which re-runs the default
+  // and brings the whole chain back on the chart.
+  const handleWindowExplain = (windowIndex: number | null) => {
     const names = job?.explainer_names ?? explainers;
     if (!task || !model || !inputData || busy || names.length === 0) return;
-    startJob(task, inputData, model, names, job?.ranking_metric ?? "average", dataName ?? undefined, windowIndex);
+    startJob(task, inputData, model, names, job?.ranking_metric ?? "average", dataName ?? undefined,
+             windowIndex ?? undefined);
   };
 
   const busy = loading || starting;

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { TaskType, ExplainerInfo } from "@/lib/types";
+import { metricsForTask } from "@/lib/metrics";
 import TaskSelector from "@/components/TaskSelector";
 import ModelSelector from "@/components/ModelSelector";
 import DataInput from "@/components/DataInput";
@@ -50,31 +51,28 @@ interface HistoryRecord {
   visualization_url: string | null;
 }
 
+/** One entry per metric the backend computes for the task — same taxonomy as the
+ *  analysis page (lib/metrics.ts). A metric it could not compute shows as 0, flagged. */
 function computeDisplayMetrics(metrics: Record<string, number | null> | undefined | null, taskType: string) {
-  const { mu_fidelity, abpc, sensitivity, complexity } = metrics ?? {};
-  let faithfulness: number | null;
-  if (taskType === "text" || taskType === "timeseries") {
-    faithfulness = abpc ?? null;
-  } else {
-    if (mu_fidelity != null && abpc != null) faithfulness = (mu_fidelity + abpc) / 2;
-    else faithfulness = mu_fidelity ?? abpc ?? null;
-  }
-  return [
-    { label: "Faithfulness", value: faithfulness },
-    { label: "Robustness",   value: sensitivity ?? null },
-    { label: "Compactness",  value: complexity  ?? null },
-  ];
+  return metricsForTask(taskType as TaskType).map((def) => {
+    const raw = metrics?.[def.field] ?? null;
+    return { label: def.label, value: raw ?? 0, missing: raw == null };
+  });
 }
 
 function MetricDisplay({ metrics, taskType }: { metrics: Record<string, number | null>; taskType: string }) {
   const items = computeDisplayMetrics(metrics, taskType);
   return (
-    <div className="grid grid-cols-3 gap-1.5">
-      {items.map(({ label, value }) => (
+    <div className={`grid gap-1.5 ${items.length > 3 ? "grid-cols-4" : "grid-cols-3"}`}>
+      {items.map(({ label, value, missing }) => (
         <div key={label} className="bg-gray-50 rounded px-2 py-1 text-center">
           <p className="text-xs text-gray-400">{label}</p>
-          <p className="text-xs font-mono font-medium text-gray-700">
-            {value != null ? Number(value).toFixed(4) : "N/A"}
+          <p
+            className={`text-xs font-mono font-medium ${missing ? "text-gray-400 italic" : "text-gray-700"}`}
+            title={missing ? `${label} is not available for this explainer — counted as 0` : undefined}
+          >
+            {Number(value).toFixed(4)}
+            {missing && <span className="ml-0.5 not-italic text-[9px] align-super">n/a</span>}
           </p>
         </div>
       ))}

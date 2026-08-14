@@ -16,7 +16,7 @@ The platform enables users to upload data, select pre-trained models and XAI exp
 - DenseNet-121 (ImageNet)
 
 ### Text Classification
-- DistilBERT (SST-2)
+- BERT (HateXplain) — hate speech / normal / offensive
 
 ### Time-Series Classification
 - MOMENT (Large / Small)
@@ -258,7 +258,7 @@ Model weights are cached locally instead of relying on the ephemeral
   mounted `/project/models` volume in the container (shared across containers,
   survives recreation). Resolved by `backend/core/model_paths.py`.
 - **Populate**: `python -m backend.scripts.download_models [--only text image timeseries]`
-- **Layout**: `models/text/distilbert-sst2/` (transformers), `models/image/*.pth`
+- **Layout**: `models/text/hatexplain-bert/` (transformers), `models/image/*.pth`
   (torchvision state_dicts), `models/timeseries/moment-{large,small}/` (HF snapshot).
   Simple-CNN and InceptionTime are randomly initialized in code — nothing to download.
 - **Loading**: handlers load from this directory with `local_files_only=True` when

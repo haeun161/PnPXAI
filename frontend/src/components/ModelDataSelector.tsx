@@ -29,7 +29,7 @@ const URL_FIELD: Record<string, { placeholder: string; hint: string }> = {
   },
   text: {
     placeholder: "Input HuggingFace model URL",
-    hint: "ex. https://huggingface.co/distilbert/distilbert-base-uncased-finetuned-sst-2-english",
+    hint: "ex. https://huggingface.co/Hate-speech-CNERG/bert-base-uncased-hatexplain",
   },
   timeseries: {
     placeholder: "Input HuggingFace or checkpoint URL",

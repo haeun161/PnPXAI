@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { ExplainerResult, JobStatus, TaskType } from "@/lib/types";
+import { metricsForTask } from "@/lib/metrics";
 
 interface Props {
   explainers: string[];
@@ -24,22 +25,14 @@ const STATUS_STYLES: Record<string, { block: string; dot: string }> = {
   not_supported: { block: "border-gray-100 bg-white text-gray-400",      dot: "bg-gray-200" },
 };
 
-const METRIC_LABELS: { key: string; label: string }[] = [
-  { key: "faithfulness", label: "Faithfulness" },
-  { key: "sensitivity",  label: "Robustness" },
-  { key: "complexity",   label: "Compactness" },
-];
-
 export default function ControlBox({
   explainers, displayNames, job, loading,
   hiddenExplainers, onToggleHidden, onSetAllHidden,
   task, metricWeights, onWeightChange, onResetWeights,
 }: Props) {
-  // Faithfulness comes from classification-only metrics, which aren't computed for
-  // time-series — so it gets no weight control and no toggle there.
-  const metricLabels = METRIC_LABELS.filter(
-    ({ key }) => !(task === "timeseries" && key === "faithfulness")
-  );
+  // Only the metrics the backend computes for this task get a toggle and a weight
+  // control (text has no MuFidelity, time-series has neither classification metric).
+  const metricLabels = metricsForTask(task ?? "");
 
   const resultMap = new Map<string, ExplainerResult>();
   job?.results.forEach((r) => resultMap.set(r.explainer_name, r));

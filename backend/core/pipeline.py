@@ -467,6 +467,11 @@ def _run_ts_backtest(
         # which one (0-based within *this* response's own chain) `context` describes.
         "window_len": pred_len,
         "explained_window_index": canonical_w,
+        # Whether a window was actually picked, as opposed to defaulting to the first
+        # one. The chart can't tell these apart from `explained_window_index` alone --
+        # both are 0 -- and they display differently: the default shows the whole chain
+        # to choose from, a selection shows only the chosen window.
+        "window_selected": window_index is not None,
     })
 
     # Keep rendering aligned with what was actually explained — including the labels, or
@@ -475,6 +480,17 @@ def _run_ts_backtest(
     input_data["tensor"] = context
     if ctx_labels:
         input_data["time_labels"] = ctx_labels
+    # The single step the explainers attribute: the explained window's first predicted
+    # timestep, every channel. The attribution plots draw it just past the input window
+    # so the history and the thing that history explains sit in one picture.
+    first_step = canonical_w * pred_len
+    input_data["next_pred"] = predicted[first_step].detach().cpu().numpy()
+    input_data["next_pred_label"] = hz_labels[first_step] if hz_labels else None
+    # Which channel that scalar belongs to. Every channel's attribution is a gradient of
+    # this one value, so only this channel's forecast may be drawn next to it -- a row
+    # showing its own next step would read as if the colours on that row explained it.
+    input_data["attributed_channel"] = (model.channel_for(len(col_names))
+                                        if hasattr(model, "channel_for") else 0)
     return context
 
 

@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ExplainerInfo, TaskType } from "@/lib/types";
 import { getExplainers } from "@/lib/api";
+import { metricsForTask } from "@/lib/metrics";
 
 interface RankedResult {
   name: string;
@@ -52,13 +53,15 @@ const CATEGORY_MAP: Record<string, string> = {
 };
 
 
-const PIPELINE_STEPS = [
-  { label: "Attribution",   keys: ["attribution"] },
-  { label: "Faithfulness",  keys: ["mu_fidelity", "abpc"] },
-  { label: "Robustness",    keys: ["sensitivity"] },
-  { label: "Compactness",   keys: ["complexity"] },
-  { label: "Visualization", keys: ["visualization"] },
-];
+// One step per metric the backend evaluates for this task, so the progress bar never
+// shows a step that cannot light up (MuFidelity on text) nor merges two metrics into one.
+function pipelineSteps(task: TaskType | "") {
+  return [
+    { label: "Attribution", keys: ["attribution"] },
+    ...metricsForTask(task).map((m) => ({ label: m.label, keys: [m.field] })),
+    { label: "Visualization", keys: ["visualization"] },
+  ];
+}
 
 const MIN_STEP_MS = 280;
 
@@ -79,6 +82,7 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
   const [selected, setSelectedRaw] = useState<string[]>(cache.selected);
   const [error, setErrorRaw] = useState<string | null>(cache.error);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const PIPELINE_STEPS = useMemo(() => pipelineSteps(task), [task]);
 
   // Pipeline step timing queue
   const [displayedStepIdx, setDisplayedStepIdx] = useState(-1);
@@ -154,7 +158,7 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
     }
 
     if (!processingStepsRef.current) processStepsRef.current();
-  }, [job?.current_step, job?.current_explainer]);
+  }, [job?.current_step, job?.current_explainer, PIPELINE_STEPS]);
 
   const runDetection = async () => {
     if (!inputData) {
@@ -271,7 +275,7 @@ export default function ExplainerDetectionModal({ task, model, inputData, cache,
               <p className="text-sm font-medium text-gray-700 mb-1">Run all compatible XAI methods</p>
               <p className="text-xs text-gray-400 mb-5 leading-relaxed">
                 Detects model architecture, then evaluates each compatible<br />
-                explainer across Faithfulness · Robustness · Compactness.
+                explainer across {metricsForTask(task).map((m) => m.label).join(" · ")}.
               </p>
               {!inputData && <p className="text-xs text-amber-500 mb-4">⚠ Upload input data first</p>}
               <button

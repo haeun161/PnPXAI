@@ -15,7 +15,7 @@ type LoadStatus = "idle" | "loading" | "success" | "error";
 
 const HF_EXAMPLES: Record<string, string> = {
   image: "https://huggingface.co/microsoft/resnet-50",
-  text: "https://huggingface.co/distilbert/distilbert-base-uncased-finetuned-sst-2-english",
+  text: "https://huggingface.co/Hate-speech-CNERG/bert-base-uncased-hatexplain",
   timeseries: "https://huggingface.co/ibm-research/patchtst-etth1-pretrain",
 };
 

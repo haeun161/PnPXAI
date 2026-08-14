@@ -1,4 +1,5 @@
 import asyncio
+import math
 import uuid
 import os
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
@@ -264,6 +265,13 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
                 target_class = 0
             target_tensor = torch.tensor([target_class], dtype=torch.long)
 
+        # The metrics index the model output with this tensor, so it has to live on the
+        # same device as the activations. A CPU target against a CUDA model still gets
+        # through attribution but makes Sensitivity raise ("index is on cpu"), which is
+        # why it used to come back None for every explainer here.
+        if target_tensor is not None and input_tensor is not None:
+            target_tensor = target_tensor.to(input_tensor.device)
+
         _STATE_MUTATING = {"LRPUniformEpsilon", "LRPEpsilonPlus", "LRPEpsilonGammaBox", "LRPEpsilonAlpha2Beta1", "RAP"}
         METRIC_KEYS = [("mu_fidelity", "MuFidelity"), ("abpc", "AbPC"),
                        ("sensitivity", "Sensitivity"), ("complexity", "Complexity")]
@@ -318,8 +326,19 @@ def _run_detect_rank(job_id: str, task: str, model_name: str, input_data):
                     except Exception:
                         metrics[key] = None
 
-                valid = [v for v in metrics.values() if v is not None]
-                avg = sum(valid) / len(valid) if valid else 0.0
+                # Rank score, same convention as the explain pipeline and the UI:
+                # Sensitivity/Complexity are lower-is-better, so their sign is flipped
+                # before averaging — averaging them raw ranked the *least* robust
+                # explainer first. A metric that could not be computed (exception, or a
+                # NaN from the metric itself) counts as 0 rather than being dropped, so
+                # an explainer that produces no metrics at all can't win by default.
+                flip = {"sensitivity", "complexity"}
+                scores = [
+                    0.0 if v is None or math.isnan(v) else (-v if key in flip else v)
+                    for key, v in metrics.items()
+                    if not (task == "text" and key == "mu_fidelity")
+                ]
+                avg = sum(scores) / len(scores) if scores else 0.0
 
                 # Render visualization into linked job dir
                 job["current_step"] = "visualization"
@@ -668,7 +687,7 @@ async def get_samples(task: str, model: Optional[str] = Query(None)):
         return (1, name)
     # A model trained on specific datasets only offers those. The mapping stays on the
     # server — the client just receives the already-filtered list. Models that aren't
-    # tied to a dataset (ImageNet/SST-2 classifiers, custom uploads) offer everything.
+    # tied to a corpus (ImageNet classifiers, custom uploads) offer everything.
     trained_on = None
     if model:
         try:

@@ -3,6 +3,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { ExplainerResult, TaskType } from "@/lib/types";
+import { isMetricMissing, metricsForTask } from "@/lib/metrics";
 import RetryImage from "./RetryImage";
 
 interface Props {
@@ -92,21 +93,14 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
   const isFailed = result.status === "failed";
   const isRunning = result.status === "running" || result.status === "pending";
 
-  const faithfulness = (task === "text" || task === "timeseries")
-    ? result.abpc
-    : (result.mu_fidelity != null && result.abpc != null)
-      ? (result.mu_fidelity + result.abpc) / 2
-      : result.mu_fidelity ?? result.abpc;
-
-  // Faithfulness comes from classification-only metrics, which the backend skips for
-  // time-series — so there is no value to show rather than a misleading zero.
-  const metrics = [
-    ...(task === "timeseries"
-      ? []
-      : [{ key: "faithfulness", label: "Faithfulness", value: faithfulness }]),
-    { key: "sensitivity",  label: "Robustness",   value: result.sensitivity },
-    { key: "complexity",   label: "Compactness",  value: result.complexity },
-  ];
+  // Every metric the backend computes for this task gets its own row. A metric the
+  // backend could not produce for this explainer counts as 0 and is flagged as such.
+  const metrics = metricsForTask(task).map((def) => ({
+    key: def.key,
+    label: def.label,
+    value: result[def.field] ?? 0,
+    missing: isMetricMissing(result, def),
+  }));
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full">
@@ -148,7 +142,10 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
         document.body
       )}
 
-      <div className={`relative bg-gray-50 flex-shrink-0 ${task === "text" ? "h-[380px]" : "flex-1 min-h-0"}`}>
+      {/* Text asks for a tall token heatmap but must still be allowed to shrink: with
+          flex-shrink-0 a fixed 380px pushed the metric rows past the bottom of the card,
+          where overflow-hidden simply cut them off. */}
+      <div className={`relative bg-gray-50 ${task === "text" ? "h-[380px] min-h-0" : "flex-shrink-0 flex-1 min-h-0"}`}>
         {result.rank != null && (
           <div className="absolute top-2 left-2 z-10 w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shadow">
             #{result.rank}
@@ -356,8 +353,16 @@ export default function ResultCard({ result, task, activeMetrics, metricWeights 
                       <span className="text-xs text-gray-400 font-normal">{pct}%</span>
                     )}
                   </p>
-                  <span className={`font-mono text-center py-0.5 rounded ${isExpanded ? "text-xs w-14" : "text-base w-20"} ${isRanked ? "text-gray-800 font-semibold" : "text-gray-300"}`}>
-                    {m.value?.toFixed(3) ?? "—"}
+                  <span
+                    className={`font-mono text-center py-0.5 rounded ${isExpanded ? "text-xs w-14" : "text-base w-20"} ${
+                      m.missing ? "text-gray-400 italic" : isRanked ? "text-gray-800 font-semibold" : "text-gray-300"
+                    }`}
+                    title={m.missing
+                      ? `${m.label} is not available for ${result.display_name} — counted as 0`
+                      : undefined}
+                  >
+                    {m.value.toFixed(3)}
+                    {m.missing && <span className="ml-0.5 not-italic text-[10px] align-super">n/a</span>}
                   </span>
                 </div>
               );

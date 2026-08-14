@@ -78,6 +78,10 @@ class ForecastInfo(BaseModel):
     # Which chained window `context` (and thus the explainers) actually describes --
     # 0 by default, or whichever window a "explain this prediction" click requested.
     explained_window_index: int = 0
+    # True only when a window was explicitly requested. Distinguishes "defaulted to
+    # window 0" (chart shows the whole chain, so a window can be picked) from "window 0
+    # was chosen" (chart shows that window alone).
+    window_selected: bool = False
 
 
 class JobStatus(BaseModel):

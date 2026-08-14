@@ -9,10 +9,25 @@ const SAMPLE_INFO: Record<string, { desc: string; source: string; url?: string; 
   "bird.png": { desc: "Bird image for image classification demo.", source: "Sample image", task: "image" },
   "elephant.png": { desc: "Elephant image for image classification demo.", source: "Sample image", task: "image" },
   "flower.png": { desc: "Flower image for image classification demo.", source: "Sample image", task: "image" },
-  // Text
-  "positive_review.txt": { desc: "Positive sentiment movie review.", source: "Sample text", task: "text" },
-  "negative_review.txt": { desc: "Negative sentiment movie review.", source: "Sample text", task: "text" },
-  "neutral_review.txt": { desc: "Neutral sentiment movie review.", source: "Sample text", task: "text" },
+  // Text — one post per gold label from the HateXplain test split
+  "hate_speech_post.txt": {
+    desc: "Hate speech: a racial slur set against \"white man\", so the post attacks a group rather than a person. Annotators marked the slur itself as the reason.",
+    source: "HateXplain (AAAI 2021) — test split",
+    url: "https://github.com/hate-alert/HateXplain",
+    task: "text",
+  },
+  "normal_post.txt": {
+    desc: "Normal: harmless everyday post, with no insult and no group targeted.",
+    source: "HateXplain (AAAI 2021) — test split",
+    url: "https://github.com/hate-alert/HateXplain",
+    task: "text",
+  },
+  "offensive_post.txt": {
+    desc: "Offensive, not hate speech: an insult aimed at one person, targeting no group. The slur appears twice, so the attribution should light up in both places.",
+    source: "HateXplain (AAAI 2021) — test split",
+    url: "https://github.com/hate-alert/HateXplain",
+    task: "text",
+  },
   // Time-series
   "boiler.csv": {
     desc: "Simulated industrial boiler sensor data for fault detection & classification. 20 sensor channels (steam pressure, temperatures, damper angle, gas consumption, etc.), 200 timesteps. Binary label: normal vs. abnormal blow-down.",

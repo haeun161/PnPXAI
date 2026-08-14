@@ -10,7 +10,8 @@ interface Props {
   task: TaskType;
   // Time-series only: clicking a chained forecast window re-runs the explanation
   // anchored on that window's own input instead of the default (earliest) one.
-  onWindowExplain?: (windowIndex: number) => void;
+  // null clears the selection and brings the whole chain back (the Reset button).
+  onWindowExplain?: (windowIndex: number | null) => void;
   windowExplainDisabled?: boolean;
 }
 
@@ -23,6 +24,16 @@ const N_Y_TICKS = 4;
 // is a DOM node with its own tooltip. The backend already caps the back-test region to
 // a modest size, so this is just a safety net, not something normally hit.
 const MAX_HOVER_POINTS = 400;
+// Visible dots stop earlier than hover targets do: past this density they merge into a
+// solid band and stop reading as individual samples, which is the only reason to draw
+// them. The lines alone carry the shape from there on.
+const MAX_DOT_POINTS = 160;
+
+// Marker sizes in *rendered* pixels, converted to user units at draw time (see `scale`).
+const DOT_R = 2.2;
+const TRI_W = 10;
+const TRI_H = 8;
+const TRI_GAP = 4;
 
 function formatAxisValue(v: number): string {
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -39,7 +50,8 @@ function ForecastChart({
   disabled,
 }: {
   forecast: ForecastInfo;
-  onWindowExplain?: (windowIndex: number) => void;
+  // null clears the selection and brings the whole chain back (the Reset button).
+  onWindowExplain?: (windowIndex: number | null) => void;
   disabled?: boolean;
 }) {
   const [channel, setChannel] = useState(forecast.attributed_channel);
@@ -47,6 +59,28 @@ function ForecastChart({
   const svgRef = useRef<SVGSVGElement>(null);
 
   const ch = Math.min(channel, forecast.col_names.length - 1);
+
+  // preserveAspectRatio="none" stretches the viewBox by a different factor on each axis,
+  // so a circle drawn in user units renders as an ellipse and the marker triangle comes
+  // out skewed -- and by how much depends on the card's current width. Measuring the
+  // rendered box lets each marker be sized in real pixels and divided back into user
+  // units, so it keeps its shape at any width. Lines don't need this; they already use
+  // vectorEffect="non-scaling-stroke".
+  const [scale, setScale] = useState({ x: 1, y: 1 });
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const update = () => {
+      const box = el.getBoundingClientRect();
+      if (box.width > 0 && box.height > 0) {
+        setScale({ x: box.width / CHART_W, y: box.height / CHART_H });
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Hover state (updated on every mousemove) must not re-derive all of this every
   // time, so it's memoized on the data itself (forecast + channel) and nothing else.
@@ -66,12 +100,18 @@ function ForecastChart({
     // history/predictions mixed together; only this window's own history onward.
     const absoluteExplainedIdx = Math.min(forecast.explained_window_index ?? 0, totalWindows - 1);
     const trimStart = absoluteExplainedIdx * windowLen;
-    const predicted = fullPredicted.slice(trimStart);
-    const actual = fullActual ? fullActual.slice(trimStart) : null;
-    const horizonLabels = fullHorizonLabels.slice(trimStart);
+    // Two display modes. By default the whole chain is drawn, so there is something to
+    // pick from. Once a window is picked, only that window's own horizon is drawn --
+    // one input window and the pred_len it produced, which is exactly what the
+    // attributions below describe. Reset goes back to the chain.
+    const selected = forecast.window_selected ?? false;
+    const trimEnd = selected ? trimStart + windowLen : fullPredicted.length;
+    const predicted = fullPredicted.slice(trimStart, trimEnd);
+    const actual = fullActual ? fullActual.slice(trimStart, trimEnd) : null;
+    const horizonLabels = fullHorizonLabels.slice(trimStart, trimEnd);
     // How many windows remain visible after trimming -- the explained one is always
     // display-relative window 0 now.
-    const maxWindows = totalWindows - absoluteExplainedIdx;
+    const maxWindows = selected ? 1 : totalWindows - absoluteExplainedIdx;
 
     const ctxLen = context.length;
     const n = ctxLen + predicted.length;
@@ -120,20 +160,24 @@ function ForecastChart({
     }
 
     return {
-      context, predicted, actual, windowLen, maxWindows, absoluteExplainedIdx, ctxLen, n,
+      context, predicted, actual, windowLen, maxWindows, absoluteExplainedIdx, selected, ctxLen, n,
       stepX, xAt, yAt, contextPoints, predPoints, actualPoints, windowBoundaries, labels, hasLabels,
       xTickIndices, yTickValues, mae, mape,
     };
   }, [forecast, ch]);
   const {
-    context, predicted, actual, windowLen, maxWindows, absoluteExplainedIdx, ctxLen, n,
+    context, predicted, actual, windowLen, maxWindows, absoluteExplainedIdx, selected, ctxLen, n,
     stepX, xAt, yAt, contextPoints, predPoints, actualPoints, windowBoundaries, labels, hasLabels,
     xTickIndices, yTickValues, mae, mape,
   } = chart;
 
   // Converts a pointer's clientX into a window index by way of the SVG's rendered
   // bounding box -- one overlay covering every window, rather than one per window.
-  const clickable = !!onWindowExplain && !disabled;
+  // Nothing left to pick once a window is selected -- the chart is showing that one
+  // window alone, and clicking it would just re-run the identical job. Reset is the way
+  // back, and it stays enabled.
+  const resettable = !!onWindowExplain && !disabled;
+  const clickable = resettable && !selected;
   const windowIndexAt = (clientX: number): number | null => {
     const box = svgRef.current?.getBoundingClientRect();
     if (!box || box.width === 0) return null;
@@ -151,6 +195,36 @@ function ForecastChart({
   };
 
   const showPointHovers = n <= MAX_HOVER_POINTS;
+  const showDots = n <= MAX_DOT_POINTS;
+
+  // Round dots and an unskewed triangle, in user units (see `scale` above).
+  const dotRx = DOT_R / scale.x;
+  const dotRy = DOT_R / scale.y;
+
+  // The explainers attribute one scalar: the first step of the explained window's
+  // horizon, on the attributed channel. That is exactly display index `ctxLen`, so the
+  // marker can point at the real datum rather than at the window as a whole. It is
+  // hidden on any other channel -- nothing was attributed there, and an unlabelled
+  // arrow would read as if something had been.
+  const marker = useMemo(() => {
+    if (ch !== forecast.attributed_channel || predicted.length === 0) return null;
+    const cx = xAt(ctxLen);
+    const py = yAt(predicted[0]);
+    const halfW = TRI_W / 2 / scale.x;
+    const h = TRI_H / scale.y;
+    const gap = TRI_GAP / scale.y;
+    // Sitting above the point would clip it off the top whenever that point is the
+    // series maximum -- which, for a forecast's first step, is not unusual. Flip below
+    // and point up instead; either way the tip touches the datum.
+    const above = py - gap - h >= 0;
+    const tipY = above ? py - gap : py + gap;
+    const baseY = above ? tipY - h : tipY + h;
+    return {
+      points: `${cx - halfW},${baseY} ${cx + halfW},${baseY} ${cx},${tipY}`,
+      value: predicted[0],
+      label: hasLabels ? labels[ctxLen] : `t=${ctxLen}`,
+    };
+  }, [ch, forecast.attributed_channel, predicted, xAt, yAt, ctxLen, scale, hasLabels, labels]);
 
   return (
     <div className="w-full">
@@ -167,6 +241,15 @@ function ForecastChart({
           <span className="inline-block w-4 h-0 border-t-2 border-dashed border-red-500" aria-hidden />
           Predicted
         </span>
+        {marker && (
+          <span
+            className="flex items-center gap-1.5"
+            title="The single value the explainers attribute: the first predicted step of the explained window"
+          >
+            <span className="text-blue-600 leading-none text-[10px]" aria-hidden>▼</span>
+            Attribution target
+          </span>
+        )}
         <span className="text-gray-300">|</span>
         <span>
           seq_len = <span className="font-bold text-gray-900">{ctxLen}</span>
@@ -190,11 +273,11 @@ function ForecastChart({
             </span>
           </>
         )}
-        {absoluteExplainedIdx > 0 && (
+        {selected && (
           <button
-            onClick={() => { if (clickable) onWindowExplain!(0); }}
-            disabled={!clickable}
-            title="Clicking a window trims away everything before it -- this brings those earlier windows back"
+            onClick={() => { if (resettable) onWindowExplain!(null); }}
+            disabled={!resettable}
+            title="Show every forecast window again, so a different one can be picked"
             className="flex items-center gap-1 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
@@ -253,14 +336,33 @@ function ForecastChart({
               <polyline points={actualPoints} fill="none" stroke="#111827" strokeWidth="1.3" vectorEffect="non-scaling-stroke" />
             )}
             <polyline points={predPoints} fill="none" stroke="#FF0000" strokeWidth="2.0" strokeDasharray="4,3" vectorEffect="non-scaling-stroke" />
-            {/* One overlay for the whole predicted region: click/hover position is
-                converted to a window index instead of hit-testing per-window rects. */}
-            <rect
-              x={xAt(ctxLen)} y={0} width={Math.max(xAt(n - 1) - xAt(ctxLen), 0)} height={CHART_H}
-              fill="transparent"
-              pointerEvents={clickable ? "all" : "none"}
-              style={{ cursor: clickable ? "pointer" : "default" }}
-              onMouseMove={(e) => setHoveredWindow(windowIndexAt(e.clientX))}
+            {/* Sample dots, in each line's own colour. The dashed predicted line in
+                particular hides where one step ends and the next begins; the dots put
+                the individual timesteps back. pointerEvents off so they never take a
+                click meant for the window overlay below. */}
+            {showDots && (
+              <g pointerEvents="none">
+                {context.map((v, i) => (
+                  <ellipse key={`cd${i}`} cx={xAt(i)} cy={yAt(v)} rx={dotRx} ry={dotRy} fill="#6B7280" />
+                ))}
+                {actual?.map((v, i) => (
+                  <ellipse key={`ad${i}`} cx={xAt(ctxLen + i)} cy={yAt(v)} rx={dotRx} ry={dotRy} fill="#111827" />
+                ))}
+                {predicted.map((v, i) => (
+                  <ellipse key={`pd${i}`} cx={xAt(ctxLen + i)} cy={yAt(v)} rx={dotRx} ry={dotRy} fill="#FF0000" />
+                ))}
+              </g>
+            )}
+            {/* Everything hit-testable lives under this group, and the window
+                click/hover handlers sit on the group rather than on the overlay rect.
+                The per-point tooltip targets below are wide enough (r=6 against a
+                ~5-unit step) to blanket the predicted region, and they paint after the
+                overlay -- so SVG hit-testing hands them the click. As siblings of the
+                rect they would swallow it; as children of this group they bubble into
+                the same handler and clicking a window keeps working anywhere in the
+                region, tooltip or not. */}
+            <g
+              onMouseMove={(e) => setHoveredWindow(clickable ? windowIndexAt(e.clientX) : null)}
               onMouseLeave={() => setHoveredWindow(null)}
               onClick={(e) => {
                 const w = windowIndexAt(e.clientX);
@@ -269,22 +371,47 @@ function ForecastChart({
                 // absolute window index before asking to re-explain it.
                 if (w !== null && clickable) onWindowExplain!(absoluteExplainedIdx + w);
               }}
-            />
-            {/* Transparent hover targets: a transparent fill is not hit-tested unless
-                pointerEvents is forced on. */}
-            {showPointHovers && context.map((v, i) => (
-              <circle key={`c${i}`} cx={xAt(i)} cy={yAt(v)} r="6" fill="transparent" pointerEvents="all">
-                <title>{`${hasLabels ? labels[i] : `t=${i}`}\nInput: ${formatAxisValue(v)}`}</title>
-              </circle>
-            ))}
-            {showPointHovers && predicted.map((v, i) => (
-              <circle key={`p${i}`} cx={xAt(ctxLen + i)} cy={yAt(v)} r="6" fill="transparent" pointerEvents="all">
-                <title>
-                  {`${hasLabels ? labels[ctxLen + i] : `t=${ctxLen + i}`}\nPredicted: ${formatAxisValue(v)}` +
-                    (actual ? `\nActual: ${formatAxisValue(actual[i])}` : "")}
-                </title>
-              </circle>
-            ))}
+            >
+              {/* Base hit area for the gaps between points. */}
+              <rect
+                x={xAt(ctxLen)} y={0} width={Math.max(xAt(n - 1) - xAt(ctxLen), 0)} height={CHART_H}
+                fill="transparent"
+                pointerEvents={clickable ? "all" : "none"}
+                style={{ cursor: clickable ? "pointer" : "default" }}
+              />
+              {/* Transparent hover targets: a transparent fill is not hit-tested unless
+                  pointerEvents is forced on. */}
+              {showPointHovers && context.map((v, i) => (
+                <circle key={`c${i}`} cx={xAt(i)} cy={yAt(v)} r="6" fill="transparent" pointerEvents="all">
+                  <title>{`${hasLabels ? labels[i] : `t=${i}`}\nInput: ${formatAxisValue(v)}`}</title>
+                </circle>
+              ))}
+              {showPointHovers && predicted.map((v, i) => (
+                <circle
+                  key={`p${i}`} cx={xAt(ctxLen + i)} cy={yAt(v)} r="6" fill="transparent"
+                  pointerEvents="all" style={{ cursor: clickable ? "pointer" : "default" }}
+                >
+                  <title>
+                    {`${hasLabels ? labels[ctxLen + i] : `t=${ctxLen + i}`}\nPredicted: ${formatAxisValue(v)}` +
+                      (actual ? `\nActual: ${formatAxisValue(actual[i])}` : "")}
+                  </title>
+                </circle>
+              ))}
+              {/* Drawn last so it stays legible over the lines and the window highlight. */}
+              {marker && (
+                <polygon
+                  points={marker.points} fill="#2563EB" stroke="#FFFFFF" strokeWidth="0.5"
+                  pointerEvents="all" style={{ cursor: clickable ? "pointer" : "default" }}
+                >
+                  <title>
+                    {`Attribution target\n${marker.label}\n` +
+                      `Predicted ${forecast.col_names[ch]}: ${formatAxisValue(marker.value)}\n\n` +
+                      `Every attribution below is the gradient of this one value ` +
+                      `with respect to the input window.`}
+                  </title>
+                </polygon>
+              )}
+            </g>
           </svg>
           <div className="flex justify-between text-xs text-gray-500 mt-0.5">
             {xTickIndices.map((idx, i) => (

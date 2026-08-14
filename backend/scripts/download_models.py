@@ -4,7 +4,7 @@ Target layout (root resolved by backend.core.model_paths — $PNPXAI_MODEL_DIR o
 <repo_root>/models, which is the mounted /project/models inside the container):
 
     models/
-      text/distilbert-sst2/            (transformers save_pretrained)
+      text/hatexplain-bert/            (transformers save_pretrained)
       image/resnet50.pth               (torchvision state_dict)
       image/vgg16.pth
       image/densenet121.pth
@@ -30,7 +30,7 @@ from backend.core.model_paths import model_root, local_dir, local_file  # noqa: 
 
 
 TEXT_MODELS = {
-    "distilbert-sst2": "distilbert-base-uncased-finetuned-sst-2-english",
+    "hatexplain-bert": "Hate-speech-CNERG/bert-base-uncased-hatexplain",
 }
 IMAGE_MODELS = ["resnet50", "vgg16", "densenet121"]
 
@@ -48,7 +48,11 @@ def download_text():
         dest.mkdir(parents=True, exist_ok=True)
         print(f"[text] {name} <- {hf_id}")
         AutoTokenizer.from_pretrained(hf_id).save_pretrained(dest)
-        AutoModelForSequenceClassification.from_pretrained(hf_id).save_pretrained(dest)
+        # output_attentions=False: the HateXplain repo ships config.output_attentions=true,
+        # which transformers refuses to save (and to run) under the default sdpa attention.
+        AutoModelForSequenceClassification.from_pretrained(
+            hf_id, output_attentions=False
+        ).save_pretrained(dest)
         print(f"       saved -> {dest}  ({_dir_size_mb(dest):.0f} MB)")
 
 
