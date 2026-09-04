@@ -32,9 +32,10 @@ def normalize_attribution(attribution, task: str = "image") -> np.ndarray:
         attr_np = np.linalg.norm(attr_np, axis=0)
     elif attr_np.ndim == 2:
         if task == "timeseries":
-            # Time-series (channels, seq_len): keep per-channel *and* signed, so the
-            # plot can tell "pushed the prediction up" from "pushed it down". There is
-            # no axis to aggregate here, unlike image/text below.
+            # Time-series (channels, seq_len): keep per-channel and leave the values as
+            # they are -- there is no axis to aggregate here, unlike image/text below.
+            # The renderer takes the magnitude of each cell itself, after resampling to
+            # the signal grid, so the sign is dropped there rather than here.
             pass
         else:
             # Text (seq_len, hidden_dim) -> (seq_len,): mean over hidden dim

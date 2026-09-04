@@ -15,6 +15,12 @@ interface Props {
   windowExplainDisabled?: boolean;
 }
 
+// A label set small enough to show whole is shown whole. Cutting to the top 3 was built
+// for ImageNet's 1000 classes; against a 5-level severity scale it hides two levels and,
+// because the backend sorts by probability, prints the rest out of order ("5, 4, 3") — so
+// a distribution over a scale reads as a ranking. Wider label sets keep the top-3 cut.
+const FULL_LIST_MAX = 6;
+
 const CHART_W = 400;
 const CHART_H = 120;
 const CHART_PAD = 8;
@@ -37,6 +43,62 @@ const TRI_GAP = 4;
 
 function formatAxisValue(v: number): string {
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+// Ordinal labels lead with their own level ("1 — NON-TOXIC (clearly benign)", ...,
+// "5 — TOXIC (very offensive or abusive)"). Where every label carries a distinct
+// leading integer, the rows can be laid
+// out along the scale instead of by probability, which is what makes "the model is torn
+// between 4 and 5" visible at a glance. Returns null for anything else — POSITIVE/NEGATIVE,
+// ImageNet class names — and those keep the backend's probability order.
+function ordinalLevels(items: PredictionItem[]): number[] | null {
+  const levels = items.map((p) => {
+    const m = /^\s*(\d+)(\b|$)/.exec(p.class_name);
+    return m ? Number(m[1]) : NaN;
+  });
+  if (levels.some((n) => Number.isNaN(n))) return null;
+  if (new Set(levels).size !== levels.length) return null;
+  return levels;
+}
+
+// The band a level belongs to, read off the label itself so the frontend invents no
+// vocabulary: "4 — TOXIC" -> "TOXIC", "1 — NON-TOXIC (clearly benign)" -> "NON-TOXIC".
+// The parenthetical gloss is dropped (it survives in the box's title tooltip), and a
+// bare-number label yields "" so the box just shows its level.
+function bandName(className: string): string {
+  const m = /[—–-]\s*([^(]+)/.exec(className);
+  return m ? m[1].trim() : "";
+}
+
+// Hue stops walked across the scale: green at the low end, amber through the middle,
+// red at the top. Severity is carried by hue, confidence by how filled-in the box is —
+// so a pale red 5 ("might be the worst") and a solid red 5 ("is the worst") stay
+// distinguishable, which a single-hue ramp would flatten into one.
+const SCALE_HUES = [145, 95, 45, 20, 0];
+
+function rampHue(f: number): number {
+  const x = f * (SCALE_HUES.length - 1);
+  const i = Math.min(Math.floor(x), SCALE_HUES.length - 2);
+  return SCALE_HUES[i] + (SCALE_HUES[i + 1] - SCALE_HUES[i]) * (x - i);
+}
+
+// `f` is the level's position along the scale (0..1), `prob` its percentage.
+function levelBoxStyle(f: number, prob: number, isTop: boolean): React.CSSProperties {
+  const hue = rampHue(f);
+  // Raw probability would leave everything below ~30% looking uniformly blank; the
+  // exponent lifts the low end enough to be read without reordering anything.
+  const t = Math.pow(Math.min(Math.max(prob, 0), 100) / 100, 0.6);
+  const light = 97 - 57 * t;
+  const sat = 32 + 48 * t;
+  // Flip to white only once the fill is genuinely dark. Switching on "probability > half"
+  // instead put white text on a mid salmon at 43%, which is unreadable; the crossover
+  // belongs on the rendered lightness, not on the number driving it.
+  return {
+    background: `hsl(${hue} ${sat}% ${light}%)`,
+    borderColor: `hsl(${hue} ${sat}% ${Math.max(light - 14, 26)}%)`,
+    color: light < 55 ? "#ffffff" : "#1f2937",
+    boxShadow: isTop ? `0 0 0 2px hsl(${hue} 65% 34%)` : undefined,
+  };
 }
 
 // The input window the model saw, followed by the horizon it predicted — with the
@@ -463,29 +525,78 @@ export default function PredictionInfo({ dataUrl, predictions, forecast, task, o
           ))}
 
         {/* Predictions */}
-        {predictions && predictions.length > 0 && (
-          <div className="flex-1 space-y-1.5">
-            <p className="text-xs font-medium text-gray-500 uppercase">Top-3 Predictions</p>
-            {predictions.slice(0, 3).map((pred, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <div className="flex-1">
-                  <div className="flex justify-between text-sm">
-                    <span className={i === 0 ? "font-semibold text-blue-700" : "text-gray-700"}>
-                      {pred.class_name}
-                    </span>
-                    <span className="text-gray-500">{pred.probability.toFixed(1)}%</span>
-                  </div>
-                  <div className="mt-0.5 h-1.5 rounded-full bg-gray-100 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${i === 0 ? "bg-blue-500" : "bg-gray-300"}`}
-                      style={{ width: `${Math.min(pred.probability, 100)}%` }}
-                    />
-                  </div>
+        {predictions && predictions.length > 0 && (() => {
+          const showAll = predictions.length <= FULL_LIST_MAX;
+          const shown = showAll ? predictions : predictions.slice(0, 3);
+          const levels = showAll ? ordinalLevels(shown) : null;
+          const ordered = levels
+            ? shown
+                .map((p, i) => ({ p, level: levels[i] }))
+                .sort((a, b) => a.level - b.level)
+            : shown.map((p) => ({ p, level: 0 }));
+          const rows = ordered.map((x) => x.p);
+          // Once the rows are in scale order the first one is no longer the prediction,
+          // so the highlight has to follow the actual argmax.
+          const topIdx = rows.reduce(
+            (best, p, i) => (p.probability > rows[best].probability ? i : best), 0);
+          return (
+            <div className="flex-1 space-y-1.5">
+              <p className="text-xs font-medium text-gray-500 uppercase">
+                {showAll ? "Predictions" : "Top-3 Predictions"}
+              </p>
+              {levels ? (
+                // A scale is a scale: laying the levels out left-to-right as one strip
+                // reads as "where on 1-5 does this sit", which stacked bars never did.
+                <div
+                  className="grid gap-1.5"
+                  style={{ gridTemplateColumns: `repeat(${ordered.length}, minmax(0, 1fr))` }}
+                >
+                  {ordered.map(({ p: pred, level }, i) => {
+                    const band = bandName(pred.class_name);
+                    const f = ordered.length > 1 ? i / (ordered.length - 1) : 0;
+                    return (
+                      <div
+                        key={i}
+                        title={pred.class_name}
+                        className="rounded-lg border px-1 py-1.5 text-center transition-colors"
+                        style={levelBoxStyle(f, pred.probability, i === topIdx)}
+                      >
+                        <div className="text-base font-bold leading-none">{level}</div>
+                        {band && (
+                          <div className="mt-1 text-[8px] font-semibold uppercase leading-tight break-words opacity-90">
+                            {band}
+                          </div>
+                        )}
+                        <div className="mt-1 text-[11px] font-semibold tabular-nums leading-none">
+                          {pred.probability.toFixed(1)}%
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ) : (
+                rows.map((pred, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <div className="flex justify-between text-sm">
+                        <span className={i === topIdx ? "font-semibold text-blue-700" : "text-gray-700"}>
+                          {pred.class_name}
+                        </span>
+                        <span className="text-gray-500 shrink-0 pl-2">{pred.probability.toFixed(1)}%</span>
+                      </div>
+                      <div className="mt-0.5 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${i === topIdx ? "bg-blue-500" : "bg-gray-300"}`}
+                          style={{ width: `${Math.min(pred.probability, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

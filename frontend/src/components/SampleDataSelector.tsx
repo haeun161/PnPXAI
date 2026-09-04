@@ -9,23 +9,40 @@ const SAMPLE_INFO: Record<string, { desc: string; source: string; url?: string; 
   "bird.png": { desc: "Bird image for image classification demo.", source: "Sample image", task: "image" },
   "elephant.png": { desc: "Elephant image for image classification demo.", source: "Sample image", task: "image" },
   "flower.png": { desc: "Flower image for image classification demo.", source: "Sample image", task: "image" },
-  // Text — one post per gold label from the HateXplain test split
-  "hate_speech_post.txt": {
-    desc: "Hate speech: a racial slur set against \"white man\", so the post attacks a group rather than a person. Annotators marked the slur itself as the reason.",
-    source: "HateXplain (AAAI 2021) — test split",
-    url: "https://github.com/hate-alert/HateXplain",
+  // Text — one statement per severity level (1-5) from the ToxiGen annotated split, each
+  // aimed at a different racial or ethnic group. None of them contains a slur or a
+  // profanity: ToxiGen is built around implicit toxicity, so the interesting question is
+  // which ordinary-looking words the attribution picks out.
+  // Band names (non-toxic / ambiguous / toxic) are the paper's own, from its footnote 8:
+  // "scores <3: 'non-toxic', =3: 'ambiguous', >3: 'toxic'".
+  "toxigen_l1_mexican.txt": {
+    desc: "Level 1 — non-toxic, clearly benign. Pride in one's own culture, targeting nobody. Useful as the control: the attribution should have nothing strong to point at.",
+    source: "ToxiGen (ACL 2022) — annotated split, target group: mexican",
+    url: "https://huggingface.co/datasets/toxigen/toxigen-data",
     task: "text",
   },
-  "normal_post.txt": {
-    desc: "Normal: harmless everyday post, with no insult and no group targeted.",
-    source: "HateXplain (AAAI 2021) — test split",
-    url: "https://github.com/hate-alert/HateXplain",
+  "toxigen_l2_chinese.txt": {
+    desc: "Level 2 — still non-toxic: rejecting a stereotype rather than making one. Mentions race explicitly, which is why a keyword-driven model tends to overrate it; watch whether the attribution keys on \"race\" alone.",
+    source: "ToxiGen (ACL 2022) — annotated split, target group: chinese",
+    url: "https://huggingface.co/datasets/toxigen/toxigen-data",
     task: "text",
   },
-  "offensive_post.txt": {
-    desc: "Offensive, not hate speech: an insult aimed at one person, targeting no group. The slur appears twice, so the attribution should light up in both places.",
-    source: "HateXplain (AAAI 2021) — test split",
-    url: "https://github.com/hate-alert/HateXplain",
+  "toxigen_l3_latino.txt": {
+    desc: "Level 3 — ambiguous, the paper's own name for the midpoint. A policy claim with no insult in it, which annotators split on. Whatever the attribution highlights here is the model's actual notion of borderline harm.",
+    source: "ToxiGen (ACL 2022) — annotated split, target group: latino",
+    url: "https://huggingface.co/datasets/toxigen/toxigen-data",
+    task: "text",
+  },
+  "toxigen_l4_middle_east.txt": {
+    desc: "Level 4 — toxic: a plain civilizational-superiority claim. No slur, no profanity; the harm is carried entirely by the comparison, so the attribution has to find it in the sentence structure.",
+    source: "ToxiGen (ACL 2022) — annotated split, target group: middle_east",
+    url: "https://huggingface.co/datasets/toxigen/toxigen-data",
+    task: "text",
+  },
+  "toxigen_l5_native_american.txt": {
+    desc: "Level 5 — toxic, very offensive or abusive, yet still slur-free: a flat degrading generalisation about a group. The clearest test of whether the attribution lands on the stereotype itself.",
+    source: "ToxiGen (ACL 2022) — annotated split, target group: native_american",
+    url: "https://huggingface.co/datasets/toxigen/toxigen-data",
     task: "text",
   },
   // Time-series
@@ -50,7 +67,17 @@ interface Props {
   disabled?: boolean;
 }
 
-const displayName = (name: string) => name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+// The ToxiGen samples are named by level and target group, and the full filename
+// ("toxigen l5 native american") needs ~130px against a card label field of ~95px, so it
+// was arriving truncated to "Toxigen l...". The level is the one thing a viewer must be
+// able to read, so it leads: "L5 · Native American".
+const TOXIGEN_SAMPLE = /^toxigen_l(\d+)_(.+)$/;
+
+const displayName = (name: string) => {
+  const base = name.replace(/\.[^.]+$/, "");
+  const m = TOXIGEN_SAMPLE.exec(base);
+  return m ? `L${m[1]} · ${m[2].replace(/_/g, " ")}` : base.replace(/[_-]/g, " ");
+};
 
 export default function SampleDataSelector({ task, model, onSampleSelect, disabled }: Props) {
   const [samples, setSamples] = useState<SampleFile[]>([]);
@@ -104,11 +131,22 @@ export default function SampleDataSelector({ task, model, onSampleSelect, disabl
   };
 
   if (usePreviewCards) {
+    // Three across is right for the image samples (short names, a thumbnail that reads at
+    // any size). Text needs the width: the label field at three columns is ~45px, and the
+    // 120-character preview at ~75px is unreadable. Two columns doubles both.
+    const maxCols = task === "text" ? 2 : 3;
+    const cols = Math.min(samples.length, maxCols);
     return (
-      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(samples.length, 3)}, 1fr)` }}>
-        {samples.map((s) => {
+      // minmax(0, 1fr) rather than a bare 1fr: the default `auto` floor lets a column grow
+      // to its content's min-content width, which is how a grid overflows the box it was
+      // told to fill.
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+        {samples.map((s, idx) => {
           const isIncompat = s.compatible === false;
           const info = SAMPLE_INFO[s.name];
+          // The info popover is wider than a card, so anchoring it left would push it out
+          // of the panel from the rightmost column. Flip it there.
+          const lastCol = idx % cols === cols - 1;
           return (
             <button
               key={s.name}
@@ -134,36 +172,51 @@ export default function SampleDataSelector({ task, model, onSampleSelect, disabl
 
               <div className="flex items-center justify-between mt-1">
                 <div className="flex-1 min-w-0 flex items-center gap-1">
-                  <p className={`text-[10px] capitalize truncate ${
+                  <p className={`text-[10px] capitalize leading-tight break-words ${
                     isIncompat ? "text-gray-400" : selected === s.name ? "text-blue-700 font-semibold" : "text-gray-600"
                   }`}>
                     {displayName(s.name)}
                   </p>
                   {info && (
-                    <div className="relative flex-shrink-0">
+                    <div
+                      className="relative flex-shrink-0"
+                      // Opened by clicking the badge, dismissed by simply moving away — no
+                      // second click. mouseleave counts the popover as "inside" because it
+                      // is a descendant, absolute positioning notwithstanding, so this only
+                      // fires once the pointer has left the badge *and* the panel.
+                      onMouseLeave={() => setInfoOpen((cur) => (cur === s.name ? null : cur))}
+                    >
                       <span
                         onClick={(e) => { e.stopPropagation(); setInfoOpen(infoOpen === s.name ? null : s.name); }}
                         className="w-3.5 h-3.5 rounded-full bg-gray-200 hover:bg-blue-200 text-gray-500 hover:text-blue-600 flex items-center justify-center cursor-pointer text-[8px] font-bold transition-colors"
                         title="Dataset info"
                       >?</span>
                       {infoOpen === s.name && (
+                        // The 6px gap above the badge is padding *on the popover* rather
+                        // than an offset, so it is hoverable: crossing it to reach the panel
+                        // no longer counts as leaving, which a plain `bottom-5` offset would
+                        // have made it (closing the panel before the pointer arrived).
                         <div
-                          className="absolute bottom-5 left-0 z-50 w-56 bg-white border border-gray-200 rounded-lg shadow-lg p-2.5 text-left"
+                          className={`absolute bottom-full z-50 w-52 pb-1.5 ${
+                            lastCol ? "right-0" : "left-0"
+                          }`}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <p className="text-[10px] text-gray-700 leading-snug mb-1.5">{info.desc}</p>
-                          <p className="text-[9px] text-gray-500 leading-snug">
-                            <span className="font-semibold">Source:</span>{" "}
-                            {info.url ? (
-                              <a href={info.url} target="_blank" rel="noopener noreferrer"
-                                 onClick={(e) => e.stopPropagation()}
-                                 className="text-blue-600 hover:text-blue-800 underline">
-                                {info.source} ↗
-                              </a>
-                            ) : (
-                              <span>{info.source}</span>
-                            )}
-                          </p>
+                          <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-2.5 text-left">
+                            <p className="text-[10px] text-gray-700 leading-snug mb-1.5">{info.desc}</p>
+                            <p className="text-[9px] text-gray-500 leading-snug">
+                              <span className="font-semibold">Source:</span>{" "}
+                              {info.url ? (
+                                <a href={info.url} target="_blank" rel="noopener noreferrer"
+                                   onClick={(e) => e.stopPropagation()}
+                                   className="text-blue-600 hover:text-blue-800 underline">
+                                  {info.source} ↗
+                                </a>
+                              ) : (
+                                <span>{info.source}</span>
+                              )}
+                            </p>
+                          </div>
                         </div>
                       )}
                     </div>

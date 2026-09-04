@@ -4,12 +4,18 @@ Target layout (root resolved by backend.core.model_paths — $PNPXAI_MODEL_DIR o
 <repo_root>/models, which is the mounted /project/models inside the container):
 
     models/
-      text/hatexplain-bert/            (transformers save_pretrained)
+      text/hatexplain-bert/            (transformers save_pretrained; being retired --
+                                        kept only until the ToxiGen swap is signed off)
       image/resnet50.pth               (torchvision state_dict)
       image/vgg16.pth
       image/densenet121.pth
       timeseries/iTransformer_etth1.pth      (forecaster checkpoint; supplied, not downloaded)
       timeseries/iTransformer_illness.pth
+
+NOT covered here: text/toxigen-bert/, the current text preset. It is fine-tuned rather
+than downloaded and exists on no hub, so it comes from:
+
+    python -m backend.scripts.train_toxigen
 
 Once populated, the task handlers load from here with local_files_only=True and
 never touch the network. Weights are NOT committed to git (see models/.gitignore);
@@ -29,6 +35,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from backend.core.model_paths import model_root, local_dir, local_file  # noqa: E402
 
 
+# Retired as a serving preset (replaced by the locally-trained toxigen-bert), but still
+# downloadable: it is the baseline the attribution gate in backend/scripts/eval_toxigen.py
+# compares against, so it has to be reproducible until that comparison is retired too.
 TEXT_MODELS = {
     "hatexplain-bert": "Hate-speech-CNERG/bert-base-uncased-hatexplain",
 }

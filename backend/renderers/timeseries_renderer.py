@@ -9,16 +9,22 @@ from matplotlib.colorbar import ColorbarBase
 MAX_VIZ_VARIABLES = 15  # K — change this to adjust the limit
 
 def _normalize_attr(attr, signals):
-    """Reshape attribution to the signal grid and scale it so ±1 is a strong contribution.
+    """Reshape attribution to the signal grid, take its magnitude, and scale so 1 is strong.
 
-    The divisor is the 99th percentile of |attr| across *all* channels and timesteps —
-    global, so a value keeps its sign (negative = pushed the prediction down) and stays
-    comparable between channels rather than being stretched to fill its own range.
+    Only the magnitude is shown: the sign of an attribution says which way a cell pushed
+    the prediction, which is not what a reader of these plots is asking — they want to
+    know *where* the model looked, and a strongly negative cell mattered just as much as
+    a strongly positive one. Interpolation to the signal grid happens on the signed values
+    first, so neighbouring cells of opposite sign do not inflate each other.
+
+    The divisor is the 99th percentile across *all* channels and timesteps — global, so a
+    value stays comparable between channels rather than being stretched to fill its own
+    range.
 
     Percentile rather than max: one cell (usually the most recent timestep) routinely
     carries 30-60x the average attribution, and dividing by that flattens everything else
     to near zero — measured at 92% of cells below 0.1. Scaling by p99 lifts the bulk into
-    a visible range and lets the top 1% saturate at the ends of the colour ramp, which is
+    a visible range and lets the top 1% saturate at the end of the colour ramp, which is
     where the strongest contributions belong anyway.
     """
     if attr.ndim == 1:
@@ -35,25 +41,25 @@ def _normalize_attr(attr, signals):
                 attr[c],
             )
         attr = new_attr
-    magnitude = np.abs(attr)
-    scale = np.percentile(magnitude, 99)
+    attr = np.abs(attr)
+    scale = np.percentile(attr, 99)
     if scale <= 0:
         # Attribution so sparse that under 1% of cells are non-zero, making p99 zero.
-        scale = magnitude.max()
+        scale = attr.max()
     if scale > 0:
         attr = attr / scale
     return attr
 
 
-# Diverging, centred on white: -1 blue (pushed the prediction down), 0 white (no
-# influence), +1 red (pushed it up). Hue carries the sign and lightness the magnitude,
-# so the ramp alone encodes both — no opacity trick needed on top of it.
+# Sequential, since _normalize_attr hands over magnitudes: 0 white (no influence) through
+# 1 red (strong contribution, either direction). One ramp end, not two — with the sign
+# dropped there is nothing for a second hue to carry.
 _ATTR_CMAP = mcolors.LinearSegmentedColormap.from_list(
-    "blue_white_red", ["#0000FF", "#FFFFFF", "#FF0000"]
+    "white_red", ["#FFFFFF", "#FF0000"]
 )
-# clip=True so the top 1% that _normalize_attr leaves beyond ±1 saturates at the ends of
-# the ramp instead of being mapped past it.
-_ATTR_NORM = mcolors.Normalize(vmin=-1, vmax=1, clip=True)
+# clip=True so the top 1% that _normalize_attr leaves beyond 1 saturates at the end of the
+# ramp instead of being mapped past it.
+_ATTR_NORM = mcolors.Normalize(vmin=0, vmax=1, clip=True)
 
 def _plot_single(ax, signal, attr, col_name, x, rank=None, show_xlabel=True, time_labels=None,
                  pred_value=None, pred_label=None, pred_region=False):
@@ -175,7 +181,7 @@ def _add_colorbar(fig, bottom_margin=0.06, target_name=None):
     cbar_ax = fig.add_axes([0.2, bottom_margin - 0.04, 0.6, 0.012])
     cb = ColorbarBase(cbar_ax, cmap=_ATTR_CMAP, norm=_ATTR_NORM, orientation="horizontal")
     what = f"predicted {target_name}" if target_name else "the prediction"
-    cb.set_label(f"Attribution to {what}  (− pushes it down / + pushes it up)",
+    cb.set_label(f"Attribution to {what}  (magnitude: white = none / red = strong)",
                  fontsize=15, color="black", labelpad=4)
     cb.ax.tick_params(labelsize=9, colors="black")
 
@@ -191,7 +197,7 @@ def render_timeseries_attribution(
     next_pred_label: str | None = None,
     attributed_channel: int | None = None,
 ) -> str:
-    """Render time-series attribution as background colour strips (cyan→magenta).
+    """Render time-series attribution magnitude as background colour strips (white→red).
 
     - Single variate: one plot.
     - Multi-variate: top 3 in main view, top K in expanded (5×3 grid), Excel for all if > K.
@@ -204,10 +210,10 @@ def render_timeseries_attribution(
     if col_names is None:
         col_names = [f"var_{i+1}" for i in range(num_channels)]
 
+    # Already magnitudes, so the mean cannot cancel a channel's contributions into
+    # "unimportant" the way a mean of signed values would.
     attr = _normalize_attr(attribution, signals)
-    # Rank on magnitude: attribution is signed, so a plain mean would let a channel's
-    # positive and negative contributions cancel into "unimportant".
-    channel_importance = np.abs(attr).mean(axis=-1)
+    channel_importance = attr.mean(axis=-1)
     sorted_idx = np.argsort(channel_importance)[::-1]
     x = np.arange(signals.shape[-1])
 

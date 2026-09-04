@@ -7,24 +7,66 @@ from backend.core.model_paths import local_dir
 from backend.renderers.text_renderer import render_text_attribution
 
 
-def _resolve_text_source(model_name: str, hf_id: str):
-    """Return (path_or_hf_id, local_files_only) preferring a locally-saved model."""
+def _resolve_text_source(model_name: str, hf_id: str | None):
+    """Return (path_or_hf_id, local_files_only) preferring a locally-saved model.
+
+    Presence is judged by config.json rather than the directory: an empty or half-written
+    snapshot directory exists but cannot be loaded, and `local_files_only=True` against it
+    fails far from the actual cause.
+    """
     d = local_dir("text", model_name)
-    if d.exists():
+    if (d / "config.json").exists():
         return str(d), True
+    if hf_id is None:
+        # Locally-trained preset with no Hub fallback. Without this the caller would hit
+        # from_pretrained(None, ...) and get an unrelated-looking error.
+        raise RuntimeError(
+            f"text model '{model_name}' is built locally and was not found at {d}. "
+            f"Run: python -m backend.scripts.train_toxigen"
+        )
     return hf_id, False
 
 _TEXT_MODELS = {
-    "hatexplain-bert": {
+    "toxigen-bert": {
         "display_name": "BERT",
-        "description": "BERT fine-tuned on HateXplain (AAAI 2021) for 3-class hate speech "
-                       "detection: hate speech / normal / offensive.",
-        "hf_id": "Hate-speech-CNERG/bert-base-uncased-hatexplain",
-        "num_labels": 3,
-        # Matches the checkpoint's own config.id2label ordering.
-        "label_map": {0: "HATE SPEECH", 1: "NORMAL", 2: "OFFENSIVE"},
-        # One sample post per gold label, taken from the HateXplain test split.
-        "datasets": ["hate_speech_post.txt", "normal_post.txt", "offensive_post.txt"],
+        "description": "BERT fine-tuned on ToxiGen (ACL 2022) to rate toxicity severity "
+                       "on the dataset's own 1-5 annotator scale. Most ToxiGen statements "
+                       "carry no slur, so the attribution has to point at what makes an "
+                       "otherwise plain sentence harmful.",
+        # Built by backend/scripts/train_toxigen.py — it does not exist on the Hub, so
+        # there is no remote to fall back to.
+        "hf_id": None,
+        "num_labels": 5,
+        # Every word here is the paper's, not ours. Two distinct pieces of ToxiGen
+        # terminology are combined:
+        #  - the scale's endpoints, §4.1: annotators rate "potential harm on a 1-5 scale
+        #    with 1 being clearly benign and 5 indicating very offensive or abusive text";
+        #  - the bands, footnote 8: the paper bins that same scale into three named
+        #    classes — "scores <3: 'non-toxic', =3: 'ambiguous', >3: 'toxic'" — and
+        #    Figure 4 labels its y-axis with exactly those three ("non-toxic, toxic,
+        #    ambiguous"). So 2/3/4 are no longer bare numbers.
+        # One honest caveat: footnote 8 bins max(HARMFULIFAI, HARMFULIFHUMAN), whereas
+        # this model regresses toxicity_human alone. Same scale, same question, one of
+        # the two raters — the thresholds carry over, the aggregation does not.
+        # Note "toxic/benign" elsewhere in the paper is the *generation* label of the
+        # 274k prompts, a different thing from these annotator-derived bands.
+        # This dict is what get_label_map() serves; config.id2label mirrors it but is
+        # not read.
+        "label_map": {
+            0: "1 — NON-TOXIC (clearly benign)",
+            1: "2 — NON-TOXIC",
+            2: "3 — AMBIGUOUS",
+            3: "4 — TOXIC",
+            4: "5 — TOXIC (very offensive or abusive)",
+        },
+        # One sample per severity level, all race-targeted and all free of slurs.
+        "datasets": [
+            "toxigen_l1_mexican.txt",
+            "toxigen_l2_chinese.txt",
+            "toxigen_l3_latino.txt",
+            "toxigen_l4_middle_east.txt",
+            "toxigen_l5_native_american.txt",
+        ],
     },
 }
 

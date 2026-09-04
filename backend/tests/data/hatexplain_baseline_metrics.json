@@ -1,0 +1,272 @@
+{
+  "model_name": "hatexplain-bert",
+  "sample_prefix": "toxigen_",
+  "note": "Attribution metrics for the outgoing text model, measured on the same sample texts the incoming model is measured on. Used by eval_toxigen.py --attribution-gate.",
+  "samples": {
+    "toxigen_l1_mexican.txt": {
+      "file_hash": "d61f5ac8dd033a968141373a880299d63426d164d4d38d0189653951515889e2",
+      "explainers": {
+        "Gradient": {
+          "mu_fidelity": null,
+          "abpc": -0.2892,
+          "sensitivity": -5.3466,
+          "complexity": -1.0431
+        },
+        "GradientXInput": {
+          "mu_fidelity": null,
+          "abpc": 0.4242,
+          "sensitivity": -9.2448,
+          "complexity": -0.2271
+        },
+        "SmoothGrad": {
+          "mu_fidelity": null,
+          "abpc": -0.3001,
+          "sensitivity": -0.927,
+          "complexity": -1.03
+        },
+        "VarGrad": {
+          "mu_fidelity": null,
+          "abpc": 0.3244,
+          "sensitivity": -1.8956,
+          "complexity": -1.1798
+        },
+        "IntegratedGradients": {
+          "mu_fidelity": null,
+          "abpc": 0.5202,
+          "sensitivity": -13.7477,
+          "complexity": -0.2223
+        },
+        "Lime": {
+          "mu_fidelity": null,
+          "abpc": 0.1221,
+          "sensitivity": null,
+          "complexity": null
+        },
+        "KernelShap": {
+          "mu_fidelity": null,
+          "abpc": 0.1773,
+          "sensitivity": null,
+          "complexity": null
+        },
+        "LRPUniformEpsilon": {
+          "mu_fidelity": null,
+          "abpc": -0.0971,
+          "sensitivity": null,
+          "complexity": -0.4376
+        }
+      }
+    },
+    "toxigen_l2_chinese.txt": {
+      "file_hash": "ea79e12c65f626bcaf0f9b85a955ea914aae7647899f75413bea8d755596326b",
+      "explainers": {
+        "Gradient": {
+          "mu_fidelity": null,
+          "abpc": -0.3456,
+          "sensitivity": -18.5168,
+          "complexity": -0.8235
+        },
+        "GradientXInput": {
+          "mu_fidelity": null,
+          "abpc": 0.4273,
+          "sensitivity": -9.3062,
+          "complexity": -0.4038
+        },
+        "SmoothGrad": {
+          "mu_fidelity": null,
+          "abpc": -0.3808,
+          "sensitivity": -0.9665,
+          "complexity": -0.953
+        },
+        "VarGrad": {
+          "mu_fidelity": null,
+          "abpc": 0.3684,
+          "sensitivity": -1.0143,
+          "complexity": -0.1285
+        },
+        "IntegratedGradients": {
+          "mu_fidelity": null,
+          "abpc": 0.4146,
+          "sensitivity": -8.1154,
+          "complexity": -0.2405
+        },
+        "Lime": {
+          "mu_fidelity": null,
+          "abpc": 0.1547,
+          "sensitivity": null,
+          "complexity": null
+        },
+        "KernelShap": {
+          "mu_fidelity": null,
+          "abpc": 0.1432,
+          "sensitivity": null,
+          "complexity": null
+        },
+        "LRPUniformEpsilon": {
+          "mu_fidelity": null,
+          "abpc": 0.0042,
+          "sensitivity": null,
+          "complexity": -0.5456
+        }
+      }
+    },
+    "toxigen_l3_latino.txt": {
+      "file_hash": "906a4d33221f8288136267e91e17ec4db19afcb4cfaba9371567592ce542a18d",
+      "explainers": {
+        "Gradient": {
+          "mu_fidelity": null,
+          "abpc": -0.5784,
+          "sensitivity": -7.3749,
+          "complexity": -0.8501
+        },
+        "GradientXInput": {
+          "mu_fidelity": null,
+          "abpc": 0.6371,
+          "sensitivity": -4.1943,
+          "complexity": -0.3624
+        },
+        "SmoothGrad": {
+          "mu_fidelity": null,
+          "abpc": -0.5772,
+          "sensitivity": -1.0113,
+          "complexity": -1.0786
+        },
+        "VarGrad": {
+          "mu_fidelity": null,
+          "abpc": 0.5839,
+          "sensitivity": -1.0136,
+          "complexity": -1.1539
+        },
+        "IntegratedGradients": {
+          "mu_fidelity": null,
+          "abpc": 0.6532,
+          "sensitivity": -3.8485,
+          "complexity": -0.3928
+        },
+        "Lime": {
+          "mu_fidelity": null,
+          "abpc": 0.1365,
+          "sensitivity": null,
+          "complexity": null
+        },
+        "KernelShap": {
+          "mu_fidelity": null,
+          "abpc": 0.087,
+          "sensitivity": null,
+          "complexity": null
+        },
+        "LRPUniformEpsilon": {
+          "mu_fidelity": null,
+          "abpc": -0.1197,
+          "sensitivity": null,
+          "complexity": -0.0042
+        }
+      }
+    },
+    "toxigen_l4_middle_east.txt": {
+      "file_hash": "74eeb93bd7fde71077f4f87e22c5a11aa9dab93c0d20f4ec0bbff6b67896e2c4",
+      "explainers": {
+        "Gradient": {
+          "mu_fidelity": null,
+          "abpc": -0.3578,
+          "sensitivity": -31.958,
+          "complexity": -1.3856
+        },
+        "GradientXInput": {
+          "mu_fidelity": null,
+          "abpc": 0.4741,
+          "sensitivity": -11.062,
+          "complexity": -0.3404
+        },
+        "SmoothGrad": {
+          "mu_fidelity": null,
+          "abpc": -0.326,
+          "sensitivity": -1.3105,
+          "complexity": -1.1006
+        },
+        "VarGrad": {
+          "mu_fidelity": null,
+          "abpc": 0.2723,
+          "sensitivity": -2.2346,
+          "complexity": -0.8039
+        },
+        "IntegratedGradients": {
+          "mu_fidelity": null,
+          "abpc": 0.4855,
+          "sensitivity": -6.4202,
+          "complexity": -0.1324
+        },
+        "Lime": {
+          "mu_fidelity": null,
+          "abpc": 0.1446,
+          "sensitivity": null,
+          "complexity": null
+        },
+        "KernelShap": {
+          "mu_fidelity": null,
+          "abpc": 0.1311,
+          "sensitivity": null,
+          "complexity": null
+        },
+        "LRPUniformEpsilon": {
+          "mu_fidelity": null,
+          "abpc": -0.0657,
+          "sensitivity": null,
+          "complexity": -0.5096
+        }
+      }
+    },
+    "toxigen_l5_native_american.txt": {
+      "file_hash": "165b17de3bafbec1b12a5fce5c03443ac1421bd5eec65d94c72992efd0246b1a",
+      "explainers": {
+        "Gradient": {
+          "mu_fidelity": null,
+          "abpc": -0.4314,
+          "sensitivity": -1.7141,
+          "complexity": -1.1264
+        },
+        "GradientXInput": {
+          "mu_fidelity": null,
+          "abpc": 0.4628,
+          "sensitivity": -3.7661,
+          "complexity": -0.9056
+        },
+        "SmoothGrad": {
+          "mu_fidelity": null,
+          "abpc": -0.3639,
+          "sensitivity": -1.3107,
+          "complexity": -1.0671
+        },
+        "VarGrad": {
+          "mu_fidelity": null,
+          "abpc": 0.3675,
+          "sensitivity": -1.0796,
+          "complexity": -1.2007
+        },
+        "IntegratedGradients": {
+          "mu_fidelity": null,
+          "abpc": 0.5004,
+          "sensitivity": -4.544,
+          "complexity": -0.3046
+        },
+        "Lime": {
+          "mu_fidelity": null,
+          "abpc": 0.1192,
+          "sensitivity": null,
+          "complexity": null
+        },
+        "KernelShap": {
+          "mu_fidelity": null,
+          "abpc": -0.0074,
+          "sensitivity": null,
+          "complexity": null
+        },
+        "LRPUniformEpsilon": {
+          "mu_fidelity": null,
+          "abpc": 0.1681,
+          "sensitivity": null,
+          "complexity": -0.031
+        }
+      }
+    }
+  }
+}

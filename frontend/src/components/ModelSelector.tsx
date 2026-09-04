@@ -15,7 +15,11 @@ type LoadStatus = "idle" | "loading" | "success" | "error";
 
 const HF_EXAMPLES: Record<string, string> = {
   image: "https://huggingface.co/microsoft/resnet-50",
-  text: "https://huggingface.co/Hate-speech-CNERG/bert-base-uncased-hatexplain",
+  // A real, loadable text classifier rather than the built-in preset: toxigen-bert is
+  // fine-tuned locally and has no Hub page, so it would be useless as a paste example.
+  // This one is trained on the same corpus (binary toxic/benign), which makes it a
+  // natural thing to compare the 5-level preset against.
+  text: "https://huggingface.co/tomh/toxigen_roberta",
   timeseries: "https://huggingface.co/ibm-research/patchtst-etth1-pretrain",
 };
 
